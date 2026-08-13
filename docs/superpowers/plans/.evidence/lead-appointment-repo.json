@@ -1,0 +1,147 @@
+{
+  "inspected_at_utc": "2026-08-13T03:21:47Z",
+  "repository_state": {
+    "is_git_repo": false,
+    "detail": "NOT a git repository. `git rev-parse --is-inside-work-tree` fails with 'fatal: not a git repository (or any of the parent directories): .git' in OdontoFlow and all parent directories up to AI-EdgeRunners. No .git dir, no .gitignore, no tracked files anywhere in the target tree.",
+    "branch_or_null": null,
+    "dirty_state_or_null": null
+  },
+  "exact_sha_or_null": null,
+  "directory_inventory": {
+    "total_size": "36K",
+    "tree": [
+      "OdontoFlow/",
+      "OdontoFlow/docs/",
+      "OdontoFlow/docs/superpowers/",
+      "OdontoFlow/docs/superpowers/plans/",
+      "OdontoFlow/docs/superpowers/plans/.evidence/ (empty dir)",
+      "OdontoFlow/docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md (192 lines)"
+    ],
+    "note": "The target directory contains documentation only. There is zero application code, no backend, no frontend, no tests, no migrations, no config, no database artifacts."
+  },
+  "existing_foundations": {
+    "backend": "NONE in OdontoFlow. No FastAPI, no Python project, no requirements.txt, no app package.",
+    "frontend": "NONE.",
+    "database": "NONE. No docker-compose, no .env, no DATABASE_URL, no SQL files.",
+    "tooling": "NONE. No pyproject.toml, Makefile, CI, or scaffolding of any kind.",
+    "adjacent_reference": "Sibling directory odontoflow-planning/ contains repo-evidence.txt (captured 2026-08-13T01:09:17Z) documenting the MEDISTOCK repo state that prior planning used as context. Verified still accurate: medistock is on branch main at SHA ef2fffb7a348aa621f7a5b387e09a1553351000f, clean (## main...origin/main), 124 tracked files. MediStock stack (NOT OdontoFlow): Flask 3.0.0, Flask-SQLAlchemy, Flask-Migrate, psycopg2-binary, marshmallow, streamlit, pandas, langgraph/langchain; docker-compose services postgres/backend/frontend/olap-refresh; SQL migrations under src/sql/migrations/ and schema under src/sql/schema/. pytest 9.0.3 installed but collects 'no tests'. This repo is the integration/context neighbor, not the OdontoFlow workspace."
+  },
+  "existing_contracts_entities": {
+    "domain_entities": "NONE in OdontoFlow. No Lead, Service, Location, Practitioner, PractitionerCapability, AvailabilityRule, ScheduleBlock, or Appointment code exists.",
+    "api_contracts": "NONE. No OpenAPI, no routers, no error schemas.",
+    "data_contracts": "NONE. No models, no tables, no ORM mappers."
+  },
+  "scheduling_existing": {
+    "presence": "NONE in OdontoFlow. No slot computation, no availability rules, no exclusion constraints, no scheduling concepts implemented.",
+    "spec_only": "Scheduling concepts exist exclusively inside the approved spec document (AvailabilityRule, ScheduleBlock, 15-minute grid, partial GiST exclusion)."
+  },
+  "tests": {
+    "in_odontoflow": "NONE. No test files, no test dirs, no pytest config.",
+    "environment_note": "Sibling medistock environment has pytest 9.0.3 available; medistock itself collects no tests (per repo-evidence.txt)."
+  },
+  "migrations_database": {
+    "in_odontoflow": "NONE. No migration tooling (Alembic or otherwise), no SQL, no Docker Postgres, no extension setup (btree_gist not enabled anywhere).",
+    "spec_requirement": "Spec requires PostgreSQL migrations defining the minimum model and the overlap guarantee (partial GiST EXCLUDE, btree_gist extension enabled by migration)."
+  },
+  "approved_spec_requirements": {
+    "architecture": "Single FastAPI deployment backed by PostgreSQL, modular monolith with 5 explicit module boundaries: commercial, catalog, organization, scheduling, audit. Application use cases per module; infrastructure adapters for persistence.",
+    "scope_in": "Lead registration + acquisition source (promotion/referral/direct); service need; active services with authoritative durations; locations with IANA time zones; practitioners with service/location capabilities; recurring availability (AvailabilityRule, evaluated in location time zone) and exceptional blocks (ScheduleBlock); eligible-slot queries; confirm/cancel/reschedule appointments; audit of creation, cancellation, rescheduling.",
+    "scope_out": "Clinical records/visit outcomes; charges/payments/debts/NubeFact; inventory/product consumption; WhatsApp/Google Calendar/voice/STT adapters; autonomous agents/LLM decisions in deterministic rules; MediStock table-for-table migration; lead deduplication.",
+    "entities": "Lead (name, >=1 contact channel phone/email, acquisition source, service need, commercial status); Service (stable id, name, authoritative duration, active); Location (stable id, name, active, IANA tz); Practitioner (stable id, display name, active); PractitionerCapability (practitioner+service+location, only active eligible); AvailabilityRule (recurring interval, location tz); ScheduleBlock (exceptional closed interval); Appointment (lead/service/practitioner/location refs, start/end instants, state confirmed|cancelled; completed/no_show reserved for later vertical).",
+    "core_flow": "Register/select lead; associate active service need; query slots for service+location+date range; filter practitioners (active, active capability, service, location); compute candidate starts on 15-minute grid in location tz using catalog duration, interval must fit wholly within availability and intersect neither blocks nor confirmed appointments; select slot; in ONE transaction reload authoritative duration, revalidate capability/availability, reject overlaps, create confirmed appointment; return stable identifiers + calculated start/end.",
+    "concurrency": "Database provides final concurrency guarantee: partial GiST exclusion constraint equivalent to EXCLUDE USING gist (practitioner_id WITH =, tstzrange(start_utc, end_utc, '[)') WITH &&) WHERE (state = 'confirmed'); extension enabled by migration; SQLSTATE 23P01 maps to stable appointment-conflict 409; cancelled appointments do not block interval reuse; no race-prone read-before-write as correctness basis.",
+    "api": "Register/read leads; admin surfaces for services/locations/practitioners/capabilities; availability + blocks definition; slot queries; confirm/cancel/reschedule. Error contract: 422 malformed input, 404 nonexistent reference, 409 inactive/missing capability/blocked/conflict; responses carry stable machine-readable error code + safe human detail. OpenAPI must describe surfaces and error schemas.",
+    "audit": "Append-only records for appointment creation, cancellation, rescheduling: actor id + type, action, entity id + type, UTC timestamp, relevant before/after state, correlation id when supplied. Rescheduling writes old+new intervals in before/after payload, same transaction, no externally visible intermediate state.",
+    "deterministic_rules": "All of service/location/practitioner/capability active; capability matches service+location; appointment fits wholly inside an availability interval; does not intersect schedule block; no overlapping active appointments per practitioner; duration from catalog (client cannot override); concurrency-safe booking/rescheduling; only confirmed appointments consume availability; LLM cannot override conflict responses.",
+    "testing": "Tests before implementation: valid lead registration; invalid acquisition source rejection; practitioner filtering by capability+location; inactive entity exclusion; slot calculation from availability+authoritative duration; exclusion of blocks and confirmed appointments; ignoring client duration override; confirming valid appointment; racing two confirmations with exactly one persisted; cancel releases slot; atomic reschedule with audit trail; stable 404/409/422 contracts. Unit tests for interval/transition rules; PostgreSQL integration tests for overlap/transactions/concurrency; FastAPI integration tests for request/response.",
+    "definition_of_done": "Postgres migrations define minimum model + overlap guarantee; FastAPI exposes approved behavior; unit + Postgres integration tests pass; OpenAPI describes public surfaces and error schemas; audit records for all required transitions; no external adapter/LLM on booking decision path; works for at least two locations and two practitioners with different capabilities; no MediStock application code modified.",
+    "deferred": "Commercial status progression; min booking lead time / max horizon; capability varying by date vs active state only; cancellation policy and who may cancel/reschedule; auth/role model."
+  },
+  "gaps": [
+    "NO GIT REPOSITORY: OdontoFlow needs `git init` (or attachment to a repo) before any versioned implementation work; no baseline SHA exists.",
+    "No backend scaffold: zero FastAPI app, no project layout for the 5-module monolith.",
+    "No database layer: no PostgreSQL config, no connection management, no ORM/SQLAlchemy or async driver, no Alembic migration scaffold.",
+    "No btree_gist / GiST exclusion infrastructure anywhere.",
+    "No tests or test harness; no pytest configuration in OdontoFlow.",
+    "No entities, models, schemas, or contracts implemented.",
+    "No scheduling/slot computation code of any kind.",
+    "No OpenAPI contract or error-code registry.",
+    "No CI, no Docker, no environment/secret management for OdontoFlow.",
+    "No .env.example or documented local run procedure for OdontoFlow.",
+    "Everything required by the spec is net-new; there is nothing to preserve, migrate, or refactor in the target tree."
+  ],
+  "exact_evidence": [
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow",
+      "symbol_or_section": "directory listing",
+      "finding": "Contains exactly one subtree: docs/. No source, config, or tooling files. du total 36K."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow",
+      "symbol_or_section": "git",
+      "finding": "`git rev-parse --is-inside-work-tree` -> 'fatal: not a git repository (or any of the parent directories): .git'. exact_sha_or_null: null."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow/docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md",
+      "symbol_or_section": "Status (line 3-5)",
+      "finding": "Spec approved in conversation 2026-08-12; 'does not authorize implementation by itself'."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow/docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md",
+      "symbol_or_section": "Architecture (lines 36-44)",
+      "finding": "One FastAPI deployment + PostgreSQL; modules: commercial, catalog, organization, scheduling, audit; application use cases per module; infrastructure adapters."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow/docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md",
+      "symbol_or_section": "Core Flow step 5 (line 99)",
+      "finding": "Candidates on 15-minute grid in location time zone; catalog duration; intervals fit wholly within recurring availability; must not intersect schedule blocks or confirmed appointments."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow/docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md",
+      "symbol_or_section": "Deterministic Rules (lines 118-120)",
+      "finding": "DB provides final concurrency guarantee via partial GiST exclusion EXCLUDE USING gist (practitioner_id WITH =, tstzrange(start_utc, end_utc, '[)') WITH &&) WHERE (state = 'confirmed'); SQLSTATE 23P01 -> stable 409."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow/docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md",
+      "symbol_or_section": "API Behavior / Error contract (lines 134-139)",
+      "finding": "422 malformed, 404 nonexistent reference, 409 inactive/missing capability/blocked/conflict; stable machine-readable error code + safe human detail."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow/docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md",
+      "symbol_or_section": "Audit (lines 143-152)",
+      "finding": "Append-only records: actor id+type, action, entity id+type, UTC timestamp, before/after state, correlation id. Reschedule writes old+new intervals in one transaction."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow/docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md",
+      "symbol_or_section": "Definition of Done (lines 175-182)",
+      "finding": "Migrations + FastAPI + unit/PG-integration tests + OpenAPI + audit + no LLM on decision path + two locations/two practitioners + 'No MediStock application code is modified'."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/odontoflow-planning/repo-evidence.txt",
+      "symbol_or_section": "HEAD/branch (lines 6-11)",
+      "finding": "Prior planning evidence references sibling repo medistock: branch main, HEAD ef2fffb7a348aa621f7a5b387e09a1553351000f, clean. Verified 2026-08-13T03:21:47Z that medistock still matches exactly; 124 tracked files."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/odontoflow-planning/repo-evidence.txt",
+      "symbol_or_section": "tracked files (lines 37-161)",
+      "finding": "MediStock tracked files include Flask backend, Streamlit frontend, SQL migrations (src/sql/migrations/001-004, src/sql/schema/01-08) — all belong to MediStock, none to OdontoFlow; spec forbids modifying them."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/odontoflow-planning/repo-evidence.txt",
+      "symbol_or_section": "pytest collect (lines 173)",
+      "finding": "Sibling environment: pytest 9.0.3 available; 'no tests collected'. Confirms no reusable test base."
+    },
+    {
+      "path": "/home/miguel/projects/portfolio/AI-EdgeRunners/OdontoFlow/docs/superpowers/plans/.evidence/",
+      "symbol_or_section": "directory contents",
+      "finding": "Empty before this file was written; no prior evidence artifacts in target tree."
+    }
+  ],
+  "uncertainties": [
+    "Whether OdontoFlow is intended to become its own git repo or be created inside the existing medistock repo (spec DoD forbids modifying MediStock code, but does not state repo layout).",
+    "Which FastAPI/Postgres stack details (async vs sync SQLAlchemy, Alembic, pydantic v2) the plan should pin — no project constraints exist in the target tree to infer from.",
+    "Python environment/venv expectations for OdontoFlow development are undefined (only sibling medistock env observed).",
+    "repo-evidence.txt resides OUTSIDE the target directory (odontoflow-planning/); its continued accuracy as OdontoFlow context is user-managed, not machine-verified beyond the medistock SHA check.",
+    "No information exists in-tree about production deployment target, containerization preference, or Postgres version for the GiST/btree_gist support."
+  ]
+}

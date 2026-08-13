@@ -1,0 +1,250 @@
+{
+  "commit": "ef2fffb7a348aa621f7a5b387e09a1553351000f",
+  "inspection_scope": "Patient/lead concepts, service catalog, SQLAlchemy/Flask infrastructure, SQL migration patterns, tests. Finance/inventory/OLAP/agents excluded.",
+  "concepts": [
+    {
+      "name": "Paciente (patient entity)",
+      "evidence_paths": [
+        "src/clinica_backend/app/models/paciente.py",
+        "src/clinica_backend/app/services/paciente_service.py",
+        "src/clinica_backend/app/schemas/paciente_schema.py",
+        "src/clinica_backend/app/routes/pacientes.py"
+      ],
+      "symbols": [
+        "Paciente.buscar_por_dni",
+        "Paciente.buscar_por_nombre",
+        "Paciente.alertas",
+        "Paciente.edad",
+        "Paciente.to_dict_completo",
+        "PacienteService.crear_paciente",
+        "PacienteService.listar_pacientes",
+        "PacienteCreateSchema",
+        "DataCurationService.curate_paciente_payload"
+      ],
+      "current_behavior": "Central CRM entity: unique optional DNI, required nombre_completo, optional phone/sexo/partial birthdate split into year/month/day columns, booleans, created_at TIMESTAMPTZ. Derived-data properties (edad, alertas for incomplete records, fecha_nacimiento_completa) live on the model. Service layer validates business rules (duplicate DNI, FK existence) and raises ValueError; routes map ValueError->400, ValidationError->400, other->500. Marshmallow schemas with EXCLUDE unknown, dump_only system fields, and Create/Update subclasses.",
+      "disposition": "REFERENCE",
+      "reason": "OdontoFlow Lead is a different concept (contact channel phone-or-email, acquisition source, service need; no DNI required, dedup out of scope). But the pattern 'contact record + derived completeness alerts + business-rule service' is a strong reference for the lead entity, and the alertas property is a good precedent for lead-completeness scoring.",
+      "risk": "Copying the model wholesale would import DNI-specific assumptions and the legacy Flask-SQLAlchemy query API (query.get is deprecated in SQLAlchemy 2.0). Lead registration must not require DNI.",
+      "characterization_test": "None exist. Would need to be written from scratch: Paciente.alertas with missing phone/district; edad boundary when birthday not reached; buscar_por_dni returns None for missing."
+    },
+    {
+      "name": "Servicio / ServicioCatalogo (service catalog)",
+      "evidence_paths": [
+        "src/clinica_backend/app/models/servicio_catalogo.py",
+        "src/clinica_backend/app/models/servicio.py",
+        "src/clinica_backend/app/services/catalogo_service.py",
+        "src/clinica_backend/app/routes/servicios.py",
+        "src/sql/schema/01_create_schema.sql"
+      ],
+      "symbols": [
+        "ServicioCatalogo",
+        "Servicio",
+        "CatalogoService.crear_servicios",
+        "CatalogoService.listar_servicios",
+        "servicios_bp"
+      ],
+      "current_behavior": "services_catalogo table: id_servicio SERIAL PK, nombre_servicio VARCHAR(250) UNIQUE NOT NULL, precio_servicio NUMERIC(10,2). Two separate model classes (servicio.py, servicio_catalogo.py) both map the same table; only ServicioCatalogo carries the ConsultaServicio relationship. Catalog CRUD exists (routes/servicios.py direct db.session usage, service layer in catalogo_service.py with ilike duplicate check). No duration, no active flag.",
+      "disposition": "ADAPT",
+      "reason": "Table shape (stable id, unique name) is a usable seed for OdontoFlow catalog module, but OdontoFlow needs duration + active state and must drop price. The catalog-service-with-rule-checks pattern adapts directly to FastAPI use cases.",
+      "risk": "Two duplicate model classes for one table is a latent inconsistency; CatalogoService.crear_servicios has an f-string bug ('{nombre} ya existe' missing closing brace) and listar_marcas references a nonexistent attribute (Marca.nonombre_marca) — do not treat service layer as verified working code.",
+      "characterization_test": "None exist. Would need writing: duplicate name rejection via ilike; creation persists unique name."
+    },
+    {
+      "name": "Consulta (appointment-like visit)",
+      "evidence_paths": [
+        "src/clinica_backend/app/models/consulta.py",
+        "src/clinica_backend/app/services/consulta_service.py",
+        "src/clinica_backend/app/models/consulta_servicio.py",
+        "src/sql/schema/01_create_schema.sql"
+      ],
+      "symbols": [
+        "Consulta",
+        "ConsultaService.crear_consulta",
+        "ConsultaService.listar_consultas",
+        "ConsultaService.obtener_historial_paciente",
+        "ConsultaServicio",
+        "consultas_servicios"
+      ],
+      "current_behavior": "consultas: id, FK paciente, fecha_consulta DATE (no time, no duration), notas TEXT, total_historico. consultas_servicios: price snapshot per line item with UNIQUE(consulta, servicio). Dynamic relationships (lazy='dynamic'), cascade delete-orphan. Date-based list/filter service; patient history query. No status, no practitioner, no location, no time windows, no conflict logic.",
+      "disposition": "REFERENCE",
+      "reason": "Illustrates the clinic's notion of a visit and the pattern of attaching catalog items with a snapshot price; useful as domain vocabulary and ORM relationship style (back_populates, dynamic lazy, cascade). OdontoFlow Appointment adds lead ref, practitioner, location, interval, state, audit — scheduling/overlap machinery does not exist here.",
+      "risk": "DATE-only granularity and no state machine would actively mislead an appointment design if copied. consultas_servicios has no UNIQUE-constraint enforcement in ORM (only in raw SQL).",
+      "characterization_test": "None exist. Would need writing: crear_consulta raises ValueError for missing paciente; listar_consultas date filters; agregar_servicio_consulta defaults price from catalog."
+    },
+    {
+      "name": "BaseModel (ORM base + serialization)",
+      "evidence_paths": [
+        "src/clinica_backend/app/models/base.py"
+      ],
+      "symbols": [
+        "BaseModel.save",
+        "BaseModel.delete",
+        "BaseModel.get_by_id",
+        "BaseModel.to_dict",
+        "BaseModel.update",
+        "BaseModel._to_camel_case"
+      ],
+      "current_behavior": "Abstract SQLAlchemy model: save/delete with rollback on SQLAlchemyError; get_by_id via legacy query.get; to_dict via db.inspect column_attrs; update(data) with hasattr guard against attribute injection; _to_camel_case for JSON keys. Heavy pedagogical comments.",
+      "disposition": "ADAPT",
+      "reason": "The update-with-hasattr-guard and to_dict-via-inspection patterns are sound and directly transferable to a SQLAlchemy 2.0 declarative base in OdontoFlow. get_by_id must become db.session.get() (query.get is removed in 2.0).",
+      "risk": "camelCase conversion is a frontend-convention leak tied to this app's API; OdontoFlow's stable error/API contract should decide its own key casing. Typed ORM patterns would make to_dict mostly unnecessary.",
+      "characterization_test": "None exist. Would need writing: update ignores unknown keys; save/rollback on integrity error; to_dict contains only column attrs."
+    },
+    {
+      "name": "Service layer (static-method use-case containers)",
+      "evidence_paths": [
+        "src/clinica_backend/app/services/paciente_service.py",
+        "src/clinica_backend/app/services/consulta_service.py",
+        "src/clinica_backend/app/services/catalogo_service.py"
+      ],
+      "symbols": [
+        "PacienteService",
+        "ConsultaService",
+        "CatalogoService",
+        "db.session.add/commit/rollback",
+        "IntegrityError"
+      ],
+      "current_behavior": "Each domain gets a class of @staticmethods: receives validated snake_case dict, runs rule checks raising ValueError, constructs model via **data unpacking, persists with try/commit/rollback, returns ORM objects (serialization deferred to routes). Paginated listing returns {items,total,page,per_page,pages}.",
+      "disposition": "REFERENCE",
+      "reason": "Matches the spec's 'modules expose application use cases' intent at a conceptual level; the dict-in/ORM-out, ValueError-on-rule-breach contract is a clean boundary worth mirroring in FastAPI services.",
+      "risk": "Static-method namespaces scale poorly to multi-entity use cases (availability query, confirm-with-revalidation); OdontoFlow should use class/function-based use cases with explicit dependencies instead. No dependency injection or unit-test seam exists.",
+      "characterization_test": "None exist. Would need writing: duplicate-DNI ValueError; FK-missing ValueError; rollback occurs on IntegrityError."
+    },
+    {
+      "name": "Data curation / input normalization",
+      "evidence_paths": [
+        "src/clinica_backend/app/services/data_curation_service.py"
+      ],
+      "symbols": [
+        "DataCurationService._normalize_text",
+        "DataCurationService._normalize_phone",
+        "DataCurationService._normalize_dni",
+        "DataCurationService.curate_paciente_payload",
+        "DataCurationService.curate_consulta_payload"
+      ],
+      "current_behavior": "Pre-validation normalization layer: strips/collapses whitespace, strips non-digit chars from phone, validates 8-digit DNI, maps sexo aliases, returns {curated, issues} without mutating input. Runs before marshmallow validation in routes.",
+      "disposition": "ADAPT",
+      "reason": "Lead registration (phone/email free-form input) has the same messy-input problem. The normalize-then-validate two-stage pipeline with an issues list maps directly to FastAPI flow (or a Pydantic preprocessor).",
+      "risk": "Python 3.10+ union syntax (str | None) and typing already modern; but methods are static + app-coupled (imports db) for data_quality_snapshot — keep normalization pure functions.",
+      "characterization_test": "None exist. Would need writing: _normalize_phone strips spaces/dashes; curate_paciente_payload returns curated+issues for missing required fields."
+    },
+    {
+      "name": "Marshmallow validation schemas",
+      "evidence_paths": [
+        "src/clinica_backend/app/schemas/paciente_schema.py"
+      ],
+      "symbols": [
+        "PacienteSchema",
+        "PacienteCreateSchema",
+        "PacienteUpdateSchema",
+        "ma.SQLAlchemyAutoSchema",
+        "dump_only",
+        "EXCLUDE"
+      ],
+      "current_behavior": "SQLAlchemyAutoSchema with explicit field whitelist, unknown=EXCLUDE, dump_only for system-generated fields (id, created_at), Regexp validation for DNI, OneOf for sexo, specialized Create/Update subclasses (Update makes dni dump_only).",
+      "disposition": "REFERENCE",
+      "reason": "The schema-role split (create vs update, read-only system fields, whitelisting) is exactly what Pydantic models in OdontoFlow should replicate for lead/service/location/practitioner payloads. The mediStock 422/400 distinction differs from the spec's 422 contract — align to spec.",
+      "risk": "marshmallow semantics (EXCLUDE, load_instance=False) do not transfer directly to Pydantic; only the design decisions transfer, not the code.",
+      "characterization_test": "None exist. Would need writing: create schema rejects missing required fields; unknown fields silently dropped; update allows partial."
+    }
+  ],
+  "infrastructure_patterns": {
+    "app_factory": "create_app() in src/clinica_backend/app/__init__.py: Flask factory that loads config from a dict selector, inits extensions (db, migrate, ma, cors) against the app, registers Blueprints under /api/v1. Clean extension wiring pattern (extensions.py holds unbound singletons).",
+    "config": "src/clinica_backend/app/config.py: per-environment config classes (development/production) with env-var overrides, TIMEZONE config key (America/Lima) applied at app level, fail-fast asserts in production. TIMEZONE-from-env is directly relevant to OdontoFlow's per-location IANA timezone requirement (though MediStock applies one app-wide tz, not per-location).",
+    "db_stack": "Flask-SQLAlchemy 3.1.1 + SQLAlchemy 2.0.23 + psycopg2-binary + PostgreSQL 15 (docker-compose). Single db session pattern via app.extensions.db.",
+    "response_facade": "src/clinica_backend/app/utils/response.py APIResponse: stable envelope {success, data} / {success:false, error:{code,message,details}}. Precedent for the spec's machine-readable error codes, though default code is GENERIC_ERROR and codes are passed ad hoc — OdontoFlow must define a stable code enum per the spec.",
+    "blueprint_routes": "routes/*.py Blueprints with try/except mapping: ValidationError->400, ValueError->400 (404 if 'no encontrado'), Exception->500. Straightforward Flask controller pattern; OdontoFlow FastAPI exception handlers should mirror the intent (404 for missing refs, 409 for conflicts per spec).",
+    "docker": "docker-compose.yml: postgres:15-alpine with src/sql/schema mounted into /docker-entrypoint-initdb.d (schema applied on first boot only); backend command runs run.py. Migrations are NOT wired into compose startup."
+  },
+  "migration_patterns": {
+    "numbered_sql_files": "src/sql/migrations/001..004_*.sql: sequential files per change; each wrapped in BEGIN/COMMIT; idempotent constructs (CREATE TABLE IF NOT EXISTS, DROP TRIGGER IF EXISTS, CREATE OR REPLACE FUNCTION).",
+    "orchestrator": "src/orquestador.py: Python script runs psql --single-transaction per file in a hardcoded ordered list, PGPASSWORD via env, fails fast. Pattern is sound but imports credentials from src/hidden.py (a local secrets module, not env) and has no applied-versions tracking table.",
+    "schema_authoring": "src/sql/schema/01_create_schema.sql: hand-written full DDL — SERIAL PKs, UNIQUE names, NUMERIC(10,2) money, TIMESTAMPTZ defaults, GIN full-text index with 'spanish' config, plain indexes. Good DDL vocabulary for OdontoFlow migrations (extension enablement, exclusion constraints not present).",
+    "application": "docker-entrypoint-initdb.d only applies schema on first database boot; migrations run manually via orquestador.py. No alembic/flask-migrate migration files exist despite flask-migrate being installed."
+  },
+  "test_reality": {
+    "tests_exist": false,
+    "evidence": "No tests/ directory, no conftest.py, no test_*.py files; grep for 'pytest|unittest' across all Python files returns nothing; requirements.txt contains no pytest/unittest/coverage packages.",
+    "implication": "Zero characterization tests exist for any reuse candidate. OdontoFlow must write characterization tests from scratch for any adapted behavior (catalog uniqueness, normalization functions, service rule checks). The spec's TDD requirement cannot lean on any existing suite."
+  },
+  "exact_evidence": [
+    {
+      "path": "src/clinica_backend/app/models/paciente.py:114-135",
+      "symbol_or_sql": "Paciente.edad",
+      "finding": "Computed age from split y/m/d columns with birthday-not-reached adjustment; guarded against invalid month/day. Reusable pattern for derived data on lead-like entities."
+    },
+    {
+      "path": "src/clinica_backend/app/models/paciente.py:153-175",
+      "symbol_or_sql": "Paciente.alertas",
+      "finding": "Returns list of stable string codes (falta_anio_nacimiento, sin_telefono, sin_distrito) for incomplete records — model-level data-quality signal. Direct precedent for lead completeness."
+    },
+    {
+      "path": "src/clinica_backend/app/models/base.py:109-144",
+      "symbol_or_sql": "BaseModel.update",
+      "finding": "setattr only when hasattr(self, key) — explicit guard against attribute injection from payload dicts. Worth keeping in any adapted base."
+    },
+    {
+      "path": "src/clinica_backend/app/models/base.py:75-104",
+      "symbol_or_sql": "BaseModel.to_dict",
+      "finding": "Column-only serialization via db.inspect(self).mapper.column_attrs; relations excluded by design, models override to add nested data."
+    },
+    {
+      "path": "src/clinica_backend/app/services/paciente_service.py:29-82",
+      "symbol_or_sql": "PacienteService.crear_paciente",
+      "finding": "Canonical rule-check-then-persist: duplicate DNI check, FK existence check, Paciente(**data) unpacking, add/commit/rollback on IntegrityError -> ValueError. Clean contract to mirror in OdontoFlow use cases."
+    },
+    {
+      "path": "src/clinica_backend/app/services/data_curation_service.py:31-35",
+      "symbol_or_sql": "DataCurationService._normalize_phone",
+      "finding": "re.sub(r'[^\\d+]', '', value) — keeps digits and plus. Directly reusable normalization for lead phone capture."
+    },
+    {
+      "path": "src/clinica_backend/app/services/data_curation_service.py:22-28",
+      "symbol_or_sql": "DataCurationService._normalize_dni",
+      "finding": "8-digit DNI validation returns None otherwise. Peruvian-id specific; OdontoFlow lead has no DNI requirement — do not reuse the rule, reuse the two-stage curated/issues pipeline shape."
+    },
+    {
+      "path": "src/clinica_backend/app/schemas/paciente_schema.py:57-71",
+      "symbol_or_sql": "PacienteCreateSchema / PacienteUpdateSchema",
+      "finding": "Specialized schemas via inheritance; Update makes dni dump_only (immutable after create). Pattern: system fields dump_only, mutation-specific restrictions in subclass."
+    },
+    {
+      "path": "src/sql/schema/01_create_schema.sql:48-52",
+      "symbol_or_sql": "CREATE TABLE servicios_catalogo",
+      "finding": "id_servicio SERIAL PK, nombre_servicio VARCHAR(250) UNIQUE NOT NULL, precio_servicio NUMERIC(10,2). Seed shape for OdontoFlow services table minus duration/active columns."
+    },
+    {
+      "path": "src/sql/migrations/001_stock_ledger_trigger.sql:12-19",
+      "symbol_or_sql": "CREATE TABLE IF NOT EXISTS movimientos_stock ... CHECK (tipo_movimiento IN (...))",
+      "finding": "Idempotent numbered migration with CHECK constraints, serial PK, FK references, TIMESTAMPTZ DEFAULT NOW(). Representative migration style."
+    },
+    {
+      "path": "src/orquestador.py:59-68",
+      "symbol_or_sql": "psql --single-transaction --file",
+      "finding": "Per-file transactional execution; whole-file rollback on any failure. Solid model for OdontoFlow migration runner."
+    },
+    {
+      "path": "src/clinica_backend/app/config.py:25",
+      "symbol_or_sql": "TIMEZONE = os.environ.get('TIMEZONE', 'America/Lima')",
+      "finding": "App-wide timezone config precedent; OdontoFlow needs per-location IANA tz, which is a deliberate extension of this convention."
+    }
+  ],
+  "do_not_copy": [
+    "Duplicate model classes for the same table: src/clinica_backend/app/models/servicio.py AND servicio_catalogo.py both map servicios_catalogo — inconsistent relationship state.",
+    "Broken DDL in src/sql/schema/01_create_schema.sql:108 ('importe_venta NUMERIC(10,2), NOT NULL' — stray comma) and :118 ('NOT NULL v,' — stray 'v'). This schema file does not apply cleanly.",
+    "Latent service-layer bugs: catalogo_service.py:52 filter_by(nombre_marca=['nombre_marca']) compares to a list; :72 references Marca.nonombre_marca (typo) — AttributeError at runtime.",
+    "Legacy query API: query.get() / query.paginate() usage throughout (removed/deprecated in SQLAlchemy 2.0). OdontoFlow must use session.get() and select() statements.",
+    "Hardcoded insecure dev secret fallback ('dev-key-insegura-por-defecto') and credentials module (src/hidden.py) imported by the orchestrator — secrets must come from env.",
+    "Flask-specific response envelope defaults (GENERIC_ERROR) and ad hoc error codes; spec requires a stable, per-error machine-readable code.",
+    "Heavy emoji/pedagogical comment style — nothing functional, but not OdontoFlow's tone; strips to clear DDD comments.",
+    "camelCase JSON key conversion as a base-model concern (frontend-convention leak into domain layer)."
+  ],
+  "uncertainties": [
+    "OdontoFlow target stack (FastAPI) is not present anywhere in MediStock; all ORM evidence is Flask-SQLAlchemy. Only patterns transfer, not packages.",
+    "No evidence of any overlap/conflict or scheduling logic anywhere in MediStock — the spec's partial GiST exclusion constraint and slot computation have no precedent to lean on; they must be validated as new work.",
+    "MediStock applies a single app-wide TIMEZONE; spec requires per-location IANA timezone evaluation — the convention exists, the mechanism does not.",
+    "services_catalogo has no active/status column and no duration; catalog reuse is shape-only, and the spec's authoritative-duration rule has no corresponding MediStock behavior.",
+    "It is unclear whether MediStock's APIResponse error codes were ever stable/contract-tested (no tests, no OpenAPI in repo) — do not assume the envelope is production-verified.",
+    "docker-compose mounts schema into initdb (first-boot only) but never runs orquestador.py migrations automatically — ambiguous whether the runtime DB is expected to already contain migrations; affects assumptions about reproducibility claims."
+  ]
+}

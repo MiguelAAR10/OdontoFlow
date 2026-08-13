@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: odontoflow
+      POSTGRES_PASSWORD: odontoflow
+      POSTGRES_DB: odontoflow
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - odontoflow_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odontoflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  odontoflow_pgdata:
