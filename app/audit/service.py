@@ -19,6 +19,7 @@ SYSTEM_ACTOR_TYPE = "system"
 def record_event(
     session: Session,
     *,
+    organization_id: int,
     entity_type: str,
     entity_id: str,
     action: str,
@@ -28,8 +29,15 @@ def record_event(
     actor_type: str | None = None,
     correlation_id: str | None = None,
 ) -> AuditEvent:
-    """Stage one audit row inside the caller's open transaction."""
+    """Stage one audit row inside the caller's open transaction.
+
+    ``organization_id`` is required and has no default: tenant attribution must
+    be written at event time, because it is unrecoverable afterwards (PF0 F-17).
+    Callers pass the organization they are acting within; ``organization.created``
+    passes the newly created organization's own id (D7).
+    """
     event = AuditEvent(
+        organization_id=organization_id,
         actor_id=actor_id or SYSTEM_ACTOR_ID,
         actor_type=actor_type or SYSTEM_ACTOR_TYPE,
         action=action,

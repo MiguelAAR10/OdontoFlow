@@ -21,6 +21,7 @@ from app.db import get_db
 from app.scheduling.models import AvailabilityRule, ScheduleBlock
 from app.scheduling.router import get_booking_operation
 from app.scheduling.service import book_appointment
+from app.tenancy import BOOTSTRAP_ORGANIZATION_ID as ORG
 
 LIMA = "America/Lima"
 UTC = timezone.utc
@@ -661,10 +662,13 @@ def test_real_23p01_path_returns_409_appointment_conflict(api_app, session):
         gate.execute(
             text(
                 "INSERT INTO appointments"
-                " (lead_id, service_id, practitioner_id, location_id, start_utc, end_utc, state)"
-                " VALUES (:lead, :service, :practitioner, :location, :start, :end, 'confirmed')"
+                " (organization_id, lead_id, service_id, practitioner_id, location_id,"
+                "  start_utc, end_utc, state)"
+                " VALUES (:org, :lead, :service, :practitioner, :location,"
+                "         :start, :end, 'confirmed')"
             ),
             {
+                "org": ORG,
                 "lead": ids["lead_id"],
                 "service": ids["service_id"],
                 "practitioner": ids["practitioner_id"],

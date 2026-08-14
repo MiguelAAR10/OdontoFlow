@@ -20,6 +20,13 @@ row is loaded ``FOR UPDATE`` as the first statement of the transaction, so two
 operations on the *same* appointment are serialized by PostgreSQL and the
 loser re-reads the committed state before deciding. State transition and audit
 record always commit together.
+
+Tenancy (PF1) adds a fourth layer that changes none of the above: every entity
+is resolved inside the acting organization, the appointment carries its
+``organization_id``, and the composite tenant foreign keys make a cross-tenant
+appointment impossible to write. The overlap preflight below stays
+**practitioner-global** on purpose (PF0 §9 S4) so it keeps mirroring the GiST
+exclusion, which is itself deliberately tenant-agnostic (§9 S1).
 """
 
 from __future__ import annotations
@@ -34,8 +41,10 @@ from app.catalog.models import Service
 from app.commercial.models import Lead
 from app.errors import AppError, ErrorCode
 from app.organization.models import Location, Practitioner, PractitionerCapability
+from app.organization.service import load_membership
 from app.scheduling.availability import generate_slots
 from app.scheduling.models import Appointment, AvailabilityRule, ScheduleBlock
+from app.tenancy import resolve_organization_id, scoped
 
 UTC = timezone.utc
 
@@ -55,8 +64,17 @@ def _require_aware(start: datetime) -> datetime:
     return start.astimezone(UTC)
 
 
-def _load_active(session: Session, model, entity_id: int, label: str):
-    entity = session.get(model, entity_id)
+def _load_active_scoped(
+    session: Session, model, entity_id: int, organization_id: int, label: str
+):
+    """Load one active tenant-owned entity, or raise the stable contract error.
+
+    The tenant filter lives in the query (§7.4): another organization's row is
+    reported as ``NOT_FOUND``, exactly like an id that never existed.
+    """
+    entity = session.scalar(
+        scoped(select(model).where(model.id == entity_id), model, organization_id)
+    )
     if entity is None:
         raise AppError(ErrorCode.NOT_FOUND, f"{label} not found.")
     if not entity.is_active:
@@ -64,11 +82,34 @@ def _load_active(session: Session, model, entity_id: int, label: str):
     return entity
 
 
+def _load_active_member(
+    session: Session, practitioner_id: int, organization_id: int
+) -> Practitioner:
+    """Load a practitioner this organization may schedule (PF0 PM3/T5).
+
+    ``Practitioner`` is global, so it is *not* filtered by organization; the
+    membership row is what makes it reachable from this tenant, and both
+    activity flags must be true.
+    """
+    membership = load_membership(session, practitioner_id, organization_id)
+    practitioner = session.get(Practitioner, practitioner_id)
+    if practitioner is None:
+        raise AppError(ErrorCode.NOT_FOUND, "Practitioner not found.")
+    if not practitioner.is_active or not membership.is_active:
+        raise AppError(ErrorCode.ENTITY_INACTIVE, "Practitioner is inactive.")
+    return practitioner
+
+
 def _require_capability(
-    session: Session, practitioner_id: int, service_id: int, location_id: int
+    session: Session,
+    practitioner_id: int,
+    service_id: int,
+    location_id: int,
+    organization_id: int,
 ) -> None:
     capability = session.scalars(
         select(PractitionerCapability).where(
+            PractitionerCapability.organization_id == organization_id,
             PractitionerCapability.practitioner_id == practitioner_id,
             PractitionerCapability.service_id == service_id,
             PractitionerCapability.location_id == location_id,
@@ -87,12 +128,16 @@ def _availability_inputs(
     location_id: int,
     start_utc: datetime,
     end_utc: datetime,
+    organization_id: int,
     *,
     exclude_appointment_id: int | None = None,
 ):
+    # Availability is published per organization *and* per branch (§9 S6), so a
+    # practitioner shared by two tenants offers independent availability in each.
     rules = list(
         session.scalars(
             select(AvailabilityRule).where(
+                AvailabilityRule.organization_id == organization_id,
                 AvailabilityRule.practitioner_id == practitioner_id,
                 AvailabilityRule.location_id == location_id,
             )
@@ -101,6 +146,7 @@ def _availability_inputs(
     blocks = list(
         session.scalars(
             select(ScheduleBlock).where(
+                ScheduleBlock.organization_id == organization_id,
                 ScheduleBlock.practitioner_id == practitioner_id,
                 ScheduleBlock.location_id == location_id,
                 ScheduleBlock.start_utc < end_utc,
@@ -108,9 +154,10 @@ def _availability_inputs(
             )
         )
     )
-    # Practitioner-wide, not location-scoped: the GiST exclusion ignores the
-    # location, so the preflight must too or a cross-location double booking
-    # would reach the database as a raw conflict instead of a clear error.
+    # Practitioner-wide: neither location- nor organization-scoped. The GiST
+    # exclusion ignores both, so the preflight must too — otherwise a
+    # cross-location or cross-organization double booking would reach the
+    # database as a raw 23P01 instead of a clear SLOT_BLOCKED (§9 S4, F-16).
     conflicting = select(Appointment).where(
         Appointment.practitioner_id == practitioner_id,
         Appointment.state == CONFIRMED,
@@ -134,6 +181,7 @@ def book_appointment(
     location_id: int,
     practitioner_id: int,
     start: datetime,
+    organization_id: int | None = None,
     actor_id: str | None = None,
     actor_type: str | None = None,
     correlation_id: str | None = None,
@@ -154,20 +202,24 @@ def book_appointment(
     the exclusion constraint settles a race.
     """
     start_utc = _require_aware(start)
+    org_id = resolve_organization_id(organization_id)
 
     with session.begin():
-        if session.get(Lead, lead_id) is None:
+        if (
+            session.scalar(scoped(select(Lead).where(Lead.id == lead_id), Lead, org_id))
+            is None
+        ):
             raise AppError(ErrorCode.NOT_FOUND, "Lead not found.")
-        service = _load_active(session, Service, service_id, "Service")
-        location = _load_active(session, Location, location_id, "Location")
-        _load_active(session, Practitioner, practitioner_id, "Practitioner")
-        _require_capability(session, practitioner_id, service_id, location_id)
+        service = _load_active_scoped(session, Service, service_id, org_id, "Service")
+        location = _load_active_scoped(session, Location, location_id, org_id, "Location")
+        _load_active_member(session, practitioner_id, org_id)
+        _require_capability(session, practitioner_id, service_id, location_id, org_id)
 
         duration_minutes = service.duration_minutes
         end_utc = start_utc + timedelta(minutes=duration_minutes)
 
         rules, blocks, appointments = _availability_inputs(
-            session, practitioner_id, location_id, start_utc, end_utc
+            session, practitioner_id, location_id, start_utc, end_utc, org_id
         )
         bookable = generate_slots(
             rules,
@@ -185,6 +237,7 @@ def book_appointment(
             )
 
         appointment = Appointment(
+            organization_id=org_id,
             lead_id=lead_id,
             service_id=service_id,
             practitioner_id=practitioner_id,
@@ -198,6 +251,7 @@ def book_appointment(
 
         record_event(
             session,
+            organization_id=org_id,
             entity_type=APPOINTMENT_ENTITY_TYPE,
             entity_id=str(appointment.id),
             action=APPOINTMENT_CREATED_ACTION,
@@ -215,16 +269,23 @@ def book_appointment(
     return appointment
 
 
-def _lock_appointment(session: Session, appointment_id: int) -> Appointment:
+def _lock_appointment(
+    session: Session, appointment_id: int, organization_id: int
+) -> Appointment:
     """Load one appointment ``FOR UPDATE`` as the transaction's first read.
 
     ``populate_existing`` forces the freshly locked row over anything the
     identity map may already hold, so the state check below always reflects
-    what is committed *now* — the point of taking the lock.
+    what is committed *now* — the point of taking the lock. The tenant filter is
+    part of the locking query, so another organization's appointment is
+    ``NOT_FOUND`` and is never even locked (§7.4).
     """
     appointment = session.execute(
-        select(Appointment)
-        .where(Appointment.id == appointment_id)
+        scoped(
+            select(Appointment).where(Appointment.id == appointment_id),
+            Appointment,
+            organization_id,
+        )
         .with_for_update()
         .execution_options(populate_existing=True)
     ).scalar_one_or_none()
@@ -262,6 +323,7 @@ def cancel_appointment(
     session: Session,
     appointment_id: int,
     *,
+    organization_id: int | None = None,
     actor_id: str | None = None,
     actor_type: str | None = None,
     correlation_id: str | None = None,
@@ -276,8 +338,10 @@ def cancel_appointment(
     Raises ``AppError``: ``NOT_FOUND`` when the appointment does not exist,
     ``ENTITY_INACTIVE`` when it is not confirmed (double cancellation).
     """
+    org_id = resolve_organization_id(organization_id)
+
     with session.begin():
-        appointment = _lock_appointment(session, appointment_id)
+        appointment = _lock_appointment(session, appointment_id, org_id)
         _require_confirmed(appointment)
 
         before_state = _appointment_state(appointment)
@@ -286,6 +350,7 @@ def cancel_appointment(
 
         record_event(
             session,
+            organization_id=appointment.organization_id,
             entity_type=APPOINTMENT_ENTITY_TYPE,
             entity_id=str(appointment.id),
             action=APPOINTMENT_CANCELLED_ACTION,
@@ -304,6 +369,7 @@ def reschedule_appointment(
     appointment_id: int,
     new_start: datetime,
     *,
+    organization_id: int | None = None,
     actor_id: str | None = None,
     actor_type: str | None = None,
     correlation_id: str | None = None,
@@ -325,21 +391,31 @@ def reschedule_appointment(
     failures, and lets ``IntegrityError`` (SQLSTATE ``23P01``) propagate when
     the exclusion constraint settles a race.
     """
+    org_id = resolve_organization_id(organization_id)
+
     with session.begin():
-        appointment = _lock_appointment(session, appointment_id)
+        appointment = _lock_appointment(session, appointment_id, org_id)
         _require_confirmed(appointment)
         new_start_utc = _require_aware(new_start)
 
         # Authoritative reload: capability and active state may have changed
-        # since the appointment was first confirmed.
-        service = _load_active(session, Service, appointment.service_id, "Service")
-        location = _load_active(session, Location, appointment.location_id, "Location")
-        _load_active(session, Practitioner, appointment.practitioner_id, "Practitioner")
+        # since the appointment was first confirmed. The appointment's own
+        # organization is the authority here — it is guaranteed to equal
+        # ``org_id`` by the tenant-scoped lock above.
+        appointment_org_id = appointment.organization_id
+        service = _load_active_scoped(
+            session, Service, appointment.service_id, appointment_org_id, "Service"
+        )
+        location = _load_active_scoped(
+            session, Location, appointment.location_id, appointment_org_id, "Location"
+        )
+        _load_active_member(session, appointment.practitioner_id, appointment_org_id)
         _require_capability(
             session,
             appointment.practitioner_id,
             appointment.service_id,
             appointment.location_id,
+            appointment_org_id,
         )
 
         duration_minutes = service.duration_minutes
@@ -351,6 +427,7 @@ def reschedule_appointment(
             appointment.location_id,
             new_start_utc,
             new_end_utc,
+            appointment_org_id,
             exclude_appointment_id=appointment.id,
         )
         bookable = generate_slots(
@@ -375,6 +452,7 @@ def reschedule_appointment(
 
         record_event(
             session,
+            organization_id=appointment_org_id,
             entity_type=APPOINTMENT_ENTITY_TYPE,
             entity_id=str(appointment.id),
             action=APPOINTMENT_RESCHEDULED_ACTION,

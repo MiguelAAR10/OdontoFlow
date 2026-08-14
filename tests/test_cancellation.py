@@ -21,9 +21,15 @@ from app.catalog.models import Service
 from app.commercial.models import Lead
 from app.db import get_db
 from app.errors import AppError, ErrorCode
-from app.organization.models import Location, Practitioner, PractitionerCapability
+from app.organization.models import (
+    Location,
+    Practitioner,
+    PractitionerCapability,
+    PractitionerMembership,
+)
 from app.scheduling.models import Appointment, AvailabilityRule
 from app.scheduling.service import book_appointment, cancel_appointment
+from app.tenancy import BOOTSTRAP_ORGANIZATION_ID as ORG
 
 LIMA = "America/Lima"
 TZ = ZoneInfo(LIMA)
@@ -41,17 +47,34 @@ def utc_of(hour, minute=0, day=MONDAY):
 
 def seed(session, *, duration_minutes=30, rule_window=(time(9, 0), time(13, 0))):
     service = Service(
-        name="Limpieza dental", duration_minutes=duration_minutes, is_active=True
+        organization_id=ORG,
+        name="Limpieza dental",
+        duration_minutes=duration_minutes,
+        is_active=True,
     )
-    location = Location(name="Sede Centro", timezone=LIMA, is_active=True)
+    location = Location(
+        organization_id=ORG, name="Sede Centro", timezone=LIMA, is_active=True
+    )
     practitioner = Practitioner(display_name="Dra. Ana", is_active=True)
     lead = Lead(
-        full_name="Juan Pérez", contact_phone="+51999000111", acquisition_source="direct"
+        organization_id=ORG,
+        full_name="Juan Pérez",
+        contact_phone="+51999000111",
+        acquisition_source="direct",
     )
     session.add_all([service, location, practitioner, lead])
     session.flush()
+    # The global practitioner identity reaches this tenant's schedule only
+    # through its membership row (PF0 PM2).
+    session.add(
+        PractitionerMembership(
+            organization_id=ORG, practitioner_id=practitioner.id, is_active=True
+        )
+    )
+    session.flush()
     session.add(
         PractitionerCapability(
+            organization_id=ORG,
             practitioner_id=practitioner.id,
             service_id=service.id,
             location_id=location.id,
@@ -60,6 +83,7 @@ def seed(session, *, duration_minutes=30, rule_window=(time(9, 0), time(13, 0)))
     )
     session.add(
         AvailabilityRule(
+            organization_id=ORG,
             practitioner_id=practitioner.id,
             location_id=location.id,
             day_of_week=0,
@@ -69,6 +93,7 @@ def seed(session, *, duration_minutes=30, rule_window=(time(9, 0), time(13, 0)))
     )
     session.commit()
     return {
+        "organization_id": ORG,
         "lead_id": lead.id,
         "service_id": service.id,
         "location_id": location.id,

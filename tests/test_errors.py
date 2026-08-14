@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app import create_app
 from app.config import get_settings
 from app.errors import AppError, ErrorCode
+from app.tenancy import BOOTSTRAP_ORGANIZATION_ID as ORG
 
 
 class _PingBody(BaseModel):
@@ -50,21 +51,22 @@ def error_app(migrated_engine):
     @app.post("/test/overlap")
     def _overlap(session=Depends(db_session)):
         with session.begin():
-            session.execute(text("INSERT INTO services (name, duration_minutes) VALUES ('Limpieza', 30)"))
-            session.execute(text("INSERT INTO locations (name, timezone) VALUES ('Sede Centro', 'America/Lima')"))
+            session.execute(text(f"INSERT INTO services (organization_id, name, duration_minutes) VALUES ({ORG}, 'Limpieza', 30)"))
+            session.execute(text(f"INSERT INTO locations (organization_id, name, timezone) VALUES ({ORG}, 'Sede Centro', 'America/Lima')"))
             session.execute(text("INSERT INTO practitioners (display_name) VALUES ('Dra. Ana')"))
-            session.execute(text("INSERT INTO leads (full_name, contact_phone, acquisition_source) VALUES ('Juan', '+51999000111', 'direct')"))
+            session.execute(text(f"INSERT INTO practitioner_memberships (organization_id, practitioner_id) VALUES ({ORG}, 1)"))
+            session.execute(text(f"INSERT INTO leads (organization_id, full_name, contact_phone, acquisition_source) VALUES ({ORG}, 'Juan', '+51999000111', 'direct')"))
         session.execute(
             text(
-                "INSERT INTO appointments (lead_id, service_id, practitioner_id, location_id, start_utc, end_utc, state) "
-                "VALUES (1, 1, 1, 1, '2026-08-13T09:00:00+00', '2026-08-13T10:00:00+00', 'confirmed')"
+                "INSERT INTO appointments (organization_id, lead_id, service_id, practitioner_id, location_id, start_utc, end_utc, state) "
+                f"VALUES ({ORG}, 1, 1, 1, 1, '2026-08-13T09:00:00+00', '2026-08-13T10:00:00+00', 'confirmed')"
             )
         )
         session.commit()
         session.execute(
             text(
-                "INSERT INTO appointments (lead_id, service_id, practitioner_id, location_id, start_utc, end_utc, state) "
-                "VALUES (1, 1, 1, 1, '2026-08-13T09:30:00+00', '2026-08-13T10:30:00+00', 'confirmed')"
+                "INSERT INTO appointments (organization_id, lead_id, service_id, practitioner_id, location_id, start_utc, end_utc, state) "
+                f"VALUES ({ORG}, 1, 1, 1, 1, '2026-08-13T09:30:00+00', '2026-08-13T10:30:00+00', 'confirmed')"
             )
         )
         session.commit()
@@ -72,8 +74,8 @@ def error_app(migrated_engine):
     @app.post("/test/duplicate")
     def _duplicate(session=Depends(db_session)):
         with session.begin():
-            session.execute(text("INSERT INTO services (name, duration_minutes) VALUES ('Limpieza', 30)"))
-        session.execute(text("INSERT INTO services (name, duration_minutes) VALUES ('Limpieza', 30)"))
+            session.execute(text(f"INSERT INTO services (organization_id, name, duration_minutes) VALUES ({ORG}, 'Limpieza', 30)"))
+        session.execute(text(f"INSERT INTO services (organization_id, name, duration_minutes) VALUES ({ORG}, 'Limpieza', 30)"))
         session.commit()
 
     return app

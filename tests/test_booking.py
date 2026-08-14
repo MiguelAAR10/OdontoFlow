@@ -20,9 +20,15 @@ from app.audit.models import AuditEvent
 from app.catalog.models import Service
 from app.commercial.models import Lead
 from app.errors import AppError, ErrorCode
-from app.organization.models import Location, Practitioner, PractitionerCapability
+from app.organization.models import (
+    Location,
+    Practitioner,
+    PractitionerCapability,
+    PractitionerMembership,
+)
 from app.scheduling.models import Appointment, AvailabilityRule, ScheduleBlock
 from app.scheduling.service import book_appointment
+from app.tenancy import BOOTSTRAP_ORGANIZATION_ID as ORG
 
 LIMA = "America/Lima"
 TZ = ZoneInfo(LIMA)
@@ -50,18 +56,35 @@ def seed(
     rule_window=(time(9, 0), time(13, 0)),
 ):
     service = Service(
-        name="Limpieza dental", duration_minutes=duration_minutes, is_active=service_active
+        organization_id=ORG,
+        name="Limpieza dental",
+        duration_minutes=duration_minutes,
+        is_active=service_active,
     )
-    location = Location(name="Sede Centro", timezone=LIMA, is_active=location_active)
+    location = Location(
+        organization_id=ORG, name="Sede Centro", timezone=LIMA, is_active=location_active
+    )
     practitioner = Practitioner(display_name="Dra. Ana", is_active=practitioner_active)
     lead = Lead(
-        full_name="Juan Pérez", contact_phone="+51999000111", acquisition_source="direct"
+        organization_id=ORG,
+        full_name="Juan Pérez",
+        contact_phone="+51999000111",
+        acquisition_source="direct",
     )
     session.add_all([service, location, practitioner, lead])
+    session.flush()
+    # The global practitioner identity reaches this tenant's schedule only
+    # through its membership row (PF0 PM2).
+    session.add(
+        PractitionerMembership(
+            organization_id=ORG, practitioner_id=practitioner.id, is_active=True
+        )
+    )
     session.flush()
     if capability:
         session.add(
             PractitionerCapability(
+                organization_id=ORG,
                 practitioner_id=practitioner.id,
                 service_id=service.id,
                 location_id=location.id,
@@ -71,6 +94,7 @@ def seed(
     if rule_window is not None:
         session.add(
             AvailabilityRule(
+                organization_id=ORG,
                 practitioner_id=practitioner.id,
                 location_id=location.id,
                 day_of_week=0,
@@ -80,6 +104,7 @@ def seed(
         )
     session.commit()
     return {
+        "organization_id": ORG,
         "lead_id": lead.id,
         "service_id": service.id,
         "location_id": location.id,
@@ -96,6 +121,7 @@ def book(session, ids, start=None, **overrides):
 
 def add_appointment(session, ids, start_utc, end_utc, state="confirmed"):
     appointment = Appointment(
+        organization_id=ids["organization_id"],
         lead_id=ids["lead_id"],
         service_id=ids["service_id"],
         practitioner_id=ids["practitioner_id"],
@@ -287,6 +313,7 @@ def test_start_intersecting_schedule_block_raises_slot_blocked(session):
     ids = seed(session)
     session.add(
         ScheduleBlock(
+            organization_id=ids["organization_id"],
             practitioner_id=ids["practitioner_id"],
             location_id=ids["location_id"],
             start_utc=utc_of(9, 15),
@@ -558,12 +585,13 @@ def test_booking_defeated_by_a_committed_row_propagates_sqlstate_23P01(
         gate.execute(
             text(
                 "INSERT INTO appointments"
-                " (lead_id, service_id, practitioner_id, location_id,"
+                " (organization_id, lead_id, service_id, practitioner_id, location_id,"
                 "  start_utc, end_utc, state)"
-                " VALUES (:lead, :service, :practitioner, :location,"
+                " VALUES (:org, :lead, :service, :practitioner, :location,"
                 "         :start, :end, 'confirmed')"
             ),
             {
+                "org": ids["organization_id"],
                 "lead": ids["lead_id"],
                 "service": ids["service_id"],
                 "practitioner": ids["practitioner_id"],
@@ -598,6 +626,7 @@ def test_session_is_reusable_after_exclusion_conflict_rollback(migrated_engine, 
         # Insert the same interval bypassing the preflight so the GiST — not the
         # application — rejects it, then prove the session still works.
         conflicting = Appointment(
+            organization_id=ids["organization_id"],
             lead_id=ids["lead_id"],
             service_id=ids["service_id"],
             practitioner_id=ids["practitioner_id"],

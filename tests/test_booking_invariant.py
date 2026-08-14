@@ -3,27 +3,45 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.scheduling.models import Appointment
+from app.tenancy import BOOTSTRAP_ORGANIZATION_ID as ORG
 
 
 def _fixture_ids(session):
     with session.begin():
         session.execute(
-            text("INSERT INTO services (name, duration_minutes) VALUES ('Limpieza', 30)")
+            text(
+                "INSERT INTO services (organization_id, name, duration_minutes) "
+                f"VALUES ({ORG}, 'Limpieza', 30)"
+            )
         )
         session.execute(
-            text("INSERT INTO locations (name, timezone) VALUES ('Sede Centro', 'America/Lima')")
+            text(
+                "INSERT INTO locations (organization_id, name, timezone) "
+                f"VALUES ({ORG}, 'Sede Centro', 'America/Lima')"
+            )
         )
         session.execute(
             text("INSERT INTO practitioners (display_name) VALUES ('Dra. Ana')")
         )
         session.execute(
-            text("INSERT INTO leads (full_name, contact_phone, acquisition_source) VALUES ('Juan', '+51999000111', 'direct')")
+            text(
+                "INSERT INTO leads (organization_id, full_name, contact_phone, acquisition_source) "
+                f"VALUES ({ORG}, 'Juan', '+51999000111', 'direct')"
+            )
         )
         service_id = session.execute(text("SELECT id FROM services")).scalar()
         location_id = session.execute(text("SELECT id FROM locations")).scalar()
         practitioner_id = session.execute(text("SELECT id FROM practitioners")).scalar()
         lead_id = session.execute(text("SELECT id FROM leads")).scalar()
+        session.execute(
+            text(
+                "INSERT INTO practitioner_memberships (organization_id, practitioner_id) "
+                "VALUES (:org, :practitioner)"
+            ),
+            {"org": ORG, "practitioner": practitioner_id},
+        )
     return {
+        "organization_id": ORG,
         "service_id": service_id,
         "location_id": location_id,
         "practitioner_id": practitioner_id,
@@ -33,6 +51,7 @@ def _fixture_ids(session):
 
 def _appointment(ids, start, end, state="confirmed") -> Appointment:
     return Appointment(
+        organization_id=ids["organization_id"],
         lead_id=ids["lead_id"],
         service_id=ids["service_id"],
         practitioner_id=ids["practitioner_id"],

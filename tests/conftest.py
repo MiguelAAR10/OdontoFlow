@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from app.config import get_settings
+from app.tenancy import BOOTSTRAP_ORGANIZATION_ID, BOOTSTRAP_ORGANIZATION_NAME
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
@@ -79,16 +80,40 @@ def clean_tables(migrated_engine):
             "schedule_blocks",
             "availability_rules",
             "practitioner_capabilities",
+            "practitioner_memberships",
             "practitioners",
             "locations",
             "services",
             "leads",
+            "organizations",
         )
         present = [t for t in tables if t in existing]
         if present:
             conn.execute(
                 text("TRUNCATE TABLE " + ", ".join(present) + " RESTART IDENTITY CASCADE")
             )
+        if "organizations" in present:
+            _seed_bootstrap_organization(conn)
+
+
+def _seed_bootstrap_organization(conn) -> None:
+    """Restore the organization migration ``0002`` seeds, after truncation.
+
+    Every test starts from the same ground the bootstrap migration leaves
+    behind: exactly one organization, with the id ``app.tenancy`` resolves to,
+    and the identity sequence positioned so a test creating a second tenant gets
+    a distinct id.
+    """
+    conn.execute(
+        text("INSERT INTO organizations (id, name) VALUES (:id, :name)"),
+        {"id": BOOTSTRAP_ORGANIZATION_ID, "name": BOOTSTRAP_ORGANIZATION_NAME},
+    )
+    conn.execute(
+        text(
+            "ALTER TABLE organizations ALTER COLUMN id RESTART WITH "
+            f"{BOOTSTRAP_ORGANIZATION_ID + 1}"
+        )
+    )
 
 
 @pytest.fixture
