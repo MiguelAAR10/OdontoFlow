@@ -19,7 +19,10 @@ from sqlalchemy.orm import sessionmaker
 from app.audit.models import AuditEvent
 from app.catalog.models import Service
 from app.commercial.models import Lead
+from app.context import default_context
 from app.errors import AppError, ErrorCode
+from app.iam.context import ExecutionContext
+from app.iam.models import SYSTEM_PRINCIPAL_ID
 from app.organization.models import (
     Location,
     Practitioner,
@@ -411,7 +414,14 @@ def test_equivalent_instant_in_another_zone_books_the_same_utc_interval(session)
 def test_successful_booking_writes_exactly_one_creation_audit_event(session):
     ids = seed(session)
 
-    appointment = book(session, ids, correlation_id="corr-123")
+    ctx = ExecutionContext(
+        organization_id=ORG,
+        principal_id=SYSTEM_PRINCIPAL_ID,
+        principal_type="system",
+        request_id="req-1",
+        correlation_id="corr-123",
+    )
+    appointment = book(session, ids, ctx=ctx)
 
     events = list(session.scalars(select(AuditEvent)))
     assert len(events) == 1
@@ -429,14 +439,16 @@ def test_successful_booking_writes_exactly_one_creation_audit_event(session):
     session.rollback()
 
 
-def test_audit_event_records_supplied_actor(session):
+def test_audit_event_records_the_resolved_system_principal(session):
     ids = seed(session)
 
-    book(session, ids, actor_id="recepcion-01", actor_type="staff")
+    ctx = default_context(organization_id=ORG)
+    book(session, ids, ctx=ctx)
 
     event = session.scalars(select(AuditEvent)).one()
-    assert event.actor_id == "recepcion-01"
-    assert event.actor_type == "staff"
+    assert event.actor_id == str(SYSTEM_PRINCIPAL_ID)
+    assert event.actor_type == "system"
+    assert event.correlation_id == ctx.correlation_id
     session.rollback()
 
 

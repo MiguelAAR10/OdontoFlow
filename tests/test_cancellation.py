@@ -19,8 +19,11 @@ from app import create_app
 from app.audit.models import AuditEvent
 from app.catalog.models import Service
 from app.commercial.models import Lead
+from app.context import default_context
 from app.db import get_db
 from app.errors import AppError, ErrorCode
+from app.iam.context import ExecutionContext
+from app.iam.models import SYSTEM_PRINCIPAL_ID
 from app.organization.models import (
     Location,
     Practitioner,
@@ -170,13 +173,14 @@ def test_cancellation_writes_exactly_one_cancelled_audit_event(session):
     appointment = book(session, ids)
     appointment_id = appointment.id
 
-    cancel_appointment(
-        session,
-        appointment_id,
-        actor_id="recepcion-01",
-        actor_type="staff",
+    ctx = ExecutionContext(
+        organization_id=ORG,
+        principal_id=SYSTEM_PRINCIPAL_ID,
+        principal_type="system",
+        request_id="req-cancel",
         correlation_id="corr-cancel-1",
     )
+    cancel_appointment(session, appointment_id, ctx=ctx)
 
     events = list(
         session.scalars(
@@ -189,8 +193,8 @@ def test_cancellation_writes_exactly_one_cancelled_audit_event(session):
     event = events[0]
     assert event.entity_type == "appointment"
     assert event.entity_id == str(appointment_id)
-    assert event.actor_id == "recepcion-01"
-    assert event.actor_type == "staff"
+    assert event.actor_id == str(SYSTEM_PRINCIPAL_ID)
+    assert event.actor_type == "system"
     assert event.correlation_id == "corr-cancel-1"
     assert event.before_state["state"] == "confirmed"
     assert event.before_state["start_utc"] == utc_of(9).isoformat()
@@ -202,19 +206,20 @@ def test_cancellation_writes_exactly_one_cancelled_audit_event(session):
     session.rollback()
 
 
-def test_cancellation_audit_defaults_to_the_system_actor(session):
+def test_cancellation_audit_defaults_to_the_system_principal(session):
     ids = seed(session)
     appointment = book(session, ids)
     appointment_id = appointment.id
 
-    cancel_appointment(session, appointment_id)
+    ctx = default_context(organization_id=ORG)
+    cancel_appointment(session, appointment_id, ctx=ctx)
 
     event = session.scalars(
         select(AuditEvent).where(AuditEvent.action == "appointment.cancelled")
     ).one()
-    assert event.actor_id == "system"
+    assert event.actor_id == str(SYSTEM_PRINCIPAL_ID)
     assert event.actor_type == "system"
-    assert event.correlation_id is None
+    assert event.correlation_id == ctx.correlation_id
     session.rollback()
 
 

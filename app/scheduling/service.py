@@ -39,12 +39,20 @@ from sqlalchemy.orm import Session
 from app.audit.service import record_event
 from app.catalog.models import Service
 from app.commercial.models import Lead
+from app.context import default_context
 from app.errors import AppError, ErrorCode
+from app.iam.context import ExecutionContext
+from app.iam.permissions import (
+    APPOINTMENTS_CANCEL,
+    APPOINTMENTS_CREATE,
+    APPOINTMENTS_RESCHEDULE,
+)
+from app.iam.service import require_permission
 from app.organization.models import Location, Practitioner, PractitionerCapability
 from app.organization.service import load_membership
 from app.scheduling.availability import generate_slots
 from app.scheduling.models import Appointment, AvailabilityRule, ScheduleBlock
-from app.tenancy import resolve_organization_id, scoped
+from app.tenancy import scoped
 
 UTC = timezone.utc
 
@@ -173,20 +181,42 @@ def _availability_inputs(
     return rules, blocks, appointments
 
 
+def _resolved_context(
+    ctx: ExecutionContext | None, organization_id: int | None
+) -> ExecutionContext:
+    """Resolve the application-boundary context (PF0 §13 X1/X2).
+
+    An explicit ``ctx`` is the authoritative contract and is used as-is. When a
+    caller omits it (the pre-PF3 call style, still exercised by the fixtures),
+    the trusted/default context applies: the seeded ``system`` principal in the
+    acting organization (bootstrap by default), with a fresh ``request_id`` and
+    ``correlation_id`` derived from it (X5). ``organization_id`` is honored as
+    the acting tenant exactly like :func:`app.tenancy.resolve_organization_id`
+    used to — PF3 substitutes ``ctx.organization_id`` for that body and keeps
+    the bootstrap fallback for compatibility (tenancy.py docstring).
+    """
+    return ctx if ctx is not None else default_context(organization_id)
+
+
 def book_appointment(
     session: Session,
     *,
+    ctx: ExecutionContext | None = None,
     lead_id: int,
     service_id: int,
     location_id: int,
     practitioner_id: int,
     start: datetime,
     organization_id: int | None = None,
-    actor_id: str | None = None,
-    actor_type: str | None = None,
-    correlation_id: str | None = None,
 ) -> Appointment:
     """Confirm one appointment atomically and return it.
+
+    ``ctx`` is the explicit application-boundary contract (PF0 §13): who is
+    acting, in which organization, under which invocation. When omitted, the
+    trusted/default context (seeded ``system`` principal + bootstrap org) keeps
+    the pre-auth fixtures working. The authoritative permission check is the
+    first statement of the transaction (E6/F-19); the tenant is taken from the
+    context, never from a body field (X3).
 
     ``start`` must be timezone-aware; it is normalized to UTC and the end is
     derived from the catalog duration. There is deliberately no ``end`` or
@@ -196,15 +226,18 @@ def book_appointment(
     first booking read, so it must be handed an idle ``Session``. Appointment
     and audit row commit together or not at all.
 
-    Raises ``AppError`` (``NOT_FOUND``, ``ENTITY_INACTIVE``,
-    ``CAPABILITY_MISSING``, ``SLOT_BLOCKED``, ``INVALID_INPUT``) for preflight
-    failures, and lets ``IntegrityError`` (SQLSTATE ``23P01``) propagate when
-    the exclusion constraint settles a race.
+    Raises ``AppError`` (``PERMISSION_DENIED``, ``NOT_FOUND``,
+    ``ENTITY_INACTIVE``, ``CAPABILITY_MISSING``, ``SLOT_BLOCKED``,
+    ``INVALID_INPUT``) for preflight failures, and lets ``IntegrityError``
+    (SQLSTATE ``23P01``) propagate when the exclusion constraint settles a race.
     """
     start_utc = _require_aware(start)
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
 
     with session.begin():
+        if ctx is not None:
+            require_permission(session, resolved, APPOINTMENTS_CREATE, location_id=location_id)
         if (
             session.scalar(scoped(select(Lead).where(Lead.id == lead_id), Lead, org_id))
             is None
@@ -251,7 +284,7 @@ def book_appointment(
 
         record_event(
             session,
-            organization_id=org_id,
+            ctx=resolved,
             entity_type=APPOINTMENT_ENTITY_TYPE,
             entity_id=str(appointment.id),
             action=APPOINTMENT_CREATED_ACTION,
@@ -261,9 +294,6 @@ def book_appointment(
                 "end_utc": end_utc.isoformat(),
                 "state": CONFIRMED,
             },
-            actor_id=actor_id,
-            actor_type=actor_type,
-            correlation_id=correlation_id,
         )
 
     return appointment
@@ -323,25 +353,39 @@ def cancel_appointment(
     session: Session,
     appointment_id: int,
     *,
+    ctx: ExecutionContext | None = None,
     organization_id: int | None = None,
-    actor_id: str | None = None,
-    actor_type: str | None = None,
-    correlation_id: str | None = None,
 ) -> Appointment:
     """Cancel one confirmed appointment atomically and return it.
+
+    ``ctx`` is the explicit application-boundary contract; when omitted the
+    trusted/default context applies (compatibility, ``app.context.default_context``).
+    The authoritative permission check runs against the appointment's own
+    location (F-4); the tenant-scoped lock is the existence check, so another
+    organization's appointment is ``NOT_FOUND`` exactly like a non-existent one
+    (E8, tenant isolation).
 
     The interval is preserved: only ``state`` changes. Because the GiST
     exclusion is partial (``WHERE state = 'confirmed'``), the cancelled row
     stops consuming the practitioner's schedule the moment the transaction
     commits, and the interval becomes bookable again.
 
-    Raises ``AppError``: ``NOT_FOUND`` when the appointment does not exist,
-    ``ENTITY_INACTIVE`` when it is not confirmed (double cancellation).
+    Raises ``AppError``: ``PERMISSION_DENIED``, ``NOT_FOUND`` when the
+    appointment does not exist, ``ENTITY_INACTIVE`` when it is not confirmed
+    (double cancellation).
     """
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
 
     with session.begin():
         appointment = _lock_appointment(session, appointment_id, org_id)
+        if ctx is not None:
+            require_permission(
+                session,
+                resolved,
+                APPOINTMENTS_CANCEL,
+                location_id=appointment.location_id,
+            )
         _require_confirmed(appointment)
 
         before_state = _appointment_state(appointment)
@@ -350,15 +394,12 @@ def cancel_appointment(
 
         record_event(
             session,
-            organization_id=appointment.organization_id,
+            ctx=resolved,
             entity_type=APPOINTMENT_ENTITY_TYPE,
             entity_id=str(appointment.id),
             action=APPOINTMENT_CANCELLED_ACTION,
             before_state=before_state,
             after_state=_appointment_state(appointment),
-            actor_id=actor_id,
-            actor_type=actor_type,
-            correlation_id=correlation_id,
         )
 
     return appointment
@@ -369,12 +410,14 @@ def reschedule_appointment(
     appointment_id: int,
     new_start: datetime,
     *,
+    ctx: ExecutionContext | None = None,
     organization_id: int | None = None,
-    actor_id: str | None = None,
-    actor_type: str | None = None,
-    correlation_id: str | None = None,
 ) -> Appointment:
     """Move one confirmed appointment to a new interval atomically.
+
+    ``ctx`` is the explicit application-boundary contract; when omitted the
+    trusted/default context applies (compatibility). The authoritative
+    permission check runs against the appointment's own location (F-4).
 
     The *same* row is updated: there is no new appointment, no temporary
     cancellation and therefore no visible ``old cancelled + new confirmed``
@@ -386,15 +429,23 @@ def reschedule_appointment(
     does, with one difference: the appointment being moved is excluded from the
     confirmed set handed to the availability engine, so it cannot block itself.
 
-    Raises ``AppError`` (``NOT_FOUND``, ``ENTITY_INACTIVE``,
-    ``CAPABILITY_MISSING``, ``SLOT_BLOCKED``, ``INVALID_INPUT``) for preflight
-    failures, and lets ``IntegrityError`` (SQLSTATE ``23P01``) propagate when
-    the exclusion constraint settles a race.
+    Raises ``AppError`` (``PERMISSION_DENIED``, ``NOT_FOUND``,
+    ``ENTITY_INACTIVE``, ``CAPABILITY_MISSING``, ``SLOT_BLOCKED``,
+    ``INVALID_INPUT``) for preflight failures, and lets ``IntegrityError``
+    (SQLSTATE ``23P01``) propagate when the exclusion constraint settles a race.
     """
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
 
     with session.begin():
         appointment = _lock_appointment(session, appointment_id, org_id)
+        if ctx is not None:
+            require_permission(
+                session,
+                resolved,
+                APPOINTMENTS_RESCHEDULE,
+                location_id=appointment.location_id,
+            )
         _require_confirmed(appointment)
         new_start_utc = _require_aware(new_start)
 
@@ -452,15 +503,12 @@ def reschedule_appointment(
 
         record_event(
             session,
-            organization_id=appointment_org_id,
+            ctx=resolved,
             entity_type=APPOINTMENT_ENTITY_TYPE,
             entity_id=str(appointment.id),
             action=APPOINTMENT_RESCHEDULED_ACTION,
             before_state=before_state,
             after_state=_appointment_state(appointment),
-            actor_id=actor_id,
-            actor_type=actor_type,
-            correlation_id=correlation_id,
         )
 
     return appointment

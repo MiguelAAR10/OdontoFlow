@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from app.context import resolve_http_context
 from app.db import get_db
 from app.errors import AppError, ErrorCode
 from app.scheduling.query import (
@@ -124,11 +125,13 @@ def query_slots_route(
 @router.post("/appointments", response_model=AppointmentRead, status_code=201)
 def create_appointment_route(
     payload: AppointmentCreate,
+    request: Request,
     db: Session = Depends(get_db),
     operation: Callable = Depends(get_booking_operation),
 ) -> AppointmentRead:
+    ctx = resolve_http_context(request)
     return book_appointment_with_retry(
-        db, operation=operation, **payload.model_dump()
+        db, operation=operation, ctx=ctx, **payload.model_dump()
     )
 
 
@@ -142,16 +145,20 @@ def create_appointment_route(
 @router.post("/appointments/{appointment_id}/cancel", response_model=AppointmentRead, status_code=200)
 def cancel_appointment_route(
     appointment_id: int,
+    request: Request,
     payload: AppointmentCancel | None = None,
     db: Session = Depends(get_db),
 ) -> AppointmentRead:
-    return cancel_appointment(db, appointment_id)
+    ctx = resolve_http_context(request)
+    return cancel_appointment(db, appointment_id, ctx=ctx)
 
 
 @router.post("/appointments/{appointment_id}/reschedule", response_model=AppointmentRead, status_code=200)
 def reschedule_appointment_route(
     appointment_id: int,
+    request: Request,
     payload: AppointmentReschedule,
     db: Session = Depends(get_db),
 ) -> AppointmentRead:
-    return reschedule_appointment(db, appointment_id, payload.new_start)
+    ctx = resolve_http_context(request)
+    return reschedule_appointment(db, appointment_id, payload.new_start, ctx=ctx)

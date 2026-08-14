@@ -24,8 +24,11 @@ from app import create_app
 from app.audit.models import AuditEvent
 from app.catalog.models import Service
 from app.commercial.models import Lead
+from app.context import default_context
 from app.db import get_db
 from app.errors import AppError, ErrorCode
+from app.iam.context import ExecutionContext
+from app.iam.models import SYSTEM_PRINCIPAL_ID
 from app.organization.models import (
     Location,
     Practitioner,
@@ -454,21 +457,21 @@ def test_successful_reschedule_writes_exactly_one_rescheduled_audit_event(sessio
     appointment = book(session, ids, start=local(9))
     appointment_id = appointment.id
 
-    reschedule_appointment(
-        session,
-        appointment_id,
-        local(10),
-        actor_id="recepcion-01",
-        actor_type="staff",
+    ctx = ExecutionContext(
+        organization_id=ORG,
+        principal_id=SYSTEM_PRINCIPAL_ID,
+        principal_type="system",
+        request_id="req-resched",
         correlation_id="corr-resched-1",
     )
+    reschedule_appointment(session, appointment_id, local(10), ctx=ctx)
 
     events = reschedule_actions(session)
     assert len(events) == 1
     event = events[0]
     assert event["entity_id"] == str(appointment_id)
-    assert event["actor_id"] == "recepcion-01"
-    assert event["actor_type"] == "staff"
+    assert event["actor_id"] == str(SYSTEM_PRINCIPAL_ID)
+    assert event["actor_type"] == "system"
     assert event["correlation_id"] == "corr-resched-1"
 
 

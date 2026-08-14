@@ -4,6 +4,13 @@
 transaction of its own, so the caller's use case decides atomicity. An audit
 row therefore lands exactly when — and only when — the state transition it
 describes is committed.
+
+Since PF3, authoritative provenance comes from an ``ExecutionContext`` (PF0
+§14 D2/D3): ``organization_id``, ``actor_id`` (the principal id) and
+``actor_type`` (the principal type) are read from ``ctx``, so a caller cannot
+supply a different actor than the one that was resolved. The legacy keyword
+form is retained for pre-PF3 callers such as ``organization.created`` (D7,
+self-reference audit) that predate any principal.
 """
 
 from __future__ import annotations
@@ -11,6 +18,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.audit.models import AuditEvent
+from app.iam.context import ExecutionContext
 
 SYSTEM_ACTOR_ID = "system"
 SYSTEM_ACTOR_TYPE = "system"
@@ -19,7 +27,8 @@ SYSTEM_ACTOR_TYPE = "system"
 def record_event(
     session: Session,
     *,
-    organization_id: int,
+    ctx: ExecutionContext | None = None,
+    organization_id: int | None = None,
     entity_type: str,
     entity_id: str,
     action: str,
@@ -31,11 +40,21 @@ def record_event(
 ) -> AuditEvent:
     """Stage one audit row inside the caller's open transaction.
 
-    ``organization_id`` is required and has no default: tenant attribution must
-    be written at event time, because it is unrecoverable afterwards (PF0 F-17).
-    Callers pass the organization they are acting within; ``organization.created``
-    passes the newly created organization's own id (D7).
+    When ``ctx`` is given, provenance derives from it: ``organization_id``,
+    ``actor_id = str(ctx.principal_id)``, ``actor_type = ctx.principal_type``
+    and ``correlation_id`` (D2/D3). Tenant attribution must be written at event
+    time, because it is unrecoverable afterwards (PF0 F-17).
+
+    The keyword form survives for pre-PF3 callers that have no context yet:
+    ``organization.created`` passes the newly created organization's own id
+    (D7) and falls back to the legacy ``system`` actor defaults.
     """
+    if ctx is not None:
+        organization_id = ctx.organization_id
+        actor_id = str(ctx.principal_id)
+        actor_type = ctx.principal_type
+        correlation_id = ctx.correlation_id
+
     event = AuditEvent(
         organization_id=organization_id,
         actor_id=actor_id or SYSTEM_ACTOR_ID,
