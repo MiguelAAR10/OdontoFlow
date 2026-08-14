@@ -23,8 +23,10 @@ from app.scheduling.query import (
     find_available_slots,
 )
 from app.scheduling.schemas import (
+    AppointmentCancel,
     AppointmentCreate,
     AppointmentRead,
+    AppointmentReschedule,
     AvailabilityRuleCreate,
     AvailabilityRuleRead,
     ScheduleBlockCreate,
@@ -32,7 +34,11 @@ from app.scheduling.schemas import (
     SlotQuery,
     SlotResult,
 )
-from app.scheduling.service import book_appointment
+from app.scheduling.service import (
+    book_appointment,
+    cancel_appointment,
+    reschedule_appointment,
+)
 
 router = APIRouter()
 
@@ -124,3 +130,28 @@ def create_appointment_route(
     return book_appointment_with_retry(
         db, operation=operation, **payload.model_dump()
     )
+
+
+# Cancellation and rescheduling deliberately skip the booking retry policy:
+# both take the appointment row ``FOR UPDATE`` as their first statement, so
+# competing mutations of the same appointment queue on that lock instead of
+# racing into a deadlock. A conflicting *new* interval is still settled by the
+# GiST exclusion and mapped to 409 by the Task 3 transport handler.
+
+
+@router.post("/appointments/{appointment_id}/cancel", response_model=AppointmentRead, status_code=200)
+def cancel_appointment_route(
+    appointment_id: int,
+    payload: AppointmentCancel | None = None,
+    db: Session = Depends(get_db),
+) -> AppointmentRead:
+    return cancel_appointment(db, appointment_id)
+
+
+@router.post("/appointments/{appointment_id}/reschedule", response_model=AppointmentRead, status_code=200)
+def reschedule_appointment_route(
+    appointment_id: int,
+    payload: AppointmentReschedule,
+    db: Session = Depends(get_db),
+) -> AppointmentRead:
+    return reschedule_appointment(db, appointment_id, payload.new_start)

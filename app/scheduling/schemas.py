@@ -62,6 +62,20 @@ class AppointmentCreate(BaseModel):
     start: datetime
 
 
+class AppointmentCancel(BaseModel):
+    """Empty by design: the appointment is identified by the path, and nothing
+    about the cancellation is caller-supplied. ``extra='forbid'`` keeps a
+    client from smuggling state through the body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AppointmentReschedule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_start: datetime
+
+
 class AppointmentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
