@@ -12,6 +12,13 @@ EXPECTED_TABLES = {
     "alembic_version",
     "organizations",
     "practitioner_memberships",
+    # PF2 — principal identity and authorization (migration 0003).
+    "principals",
+    "memberships",
+    "permissions",
+    "roles",
+    "role_permissions",
+    "role_assignments",
     "services",
     "locations",
     "practitioners",
@@ -23,7 +30,7 @@ EXPECTED_TABLES = {
     "audit_events",
 }
 
-HEAD_REVISION = "0002"
+HEAD_REVISION = "0003"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (

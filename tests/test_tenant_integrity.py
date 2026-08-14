@@ -1012,10 +1012,17 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
         "practitioner_memberships",
         "schedule_blocks",
         "services",
+        # PF2 tenant-owned tables (same rule, same NOT NULL).
+        "memberships",
+        "roles",
+        "role_assignments",
     }
     assert {row[1] for row in rows} == {"NO"}
-    # Practitioner stays global: no tenant column at all (PF0 T2/P4).
-    assert not [row for row in rows if row[0] == "practitioners"]
+    # Practitioner and Principal stay global: no tenant column at all, they
+    # reach a tenant only through their membership row (PF0 T2/P4/PR3).
+    assert not [row for row in rows if row[0] in {"practitioners", "principals"}]
+    # `permissions` is a platform catalog, never tenant data (T3/M5).
+    assert not [row for row in rows if row[0] == "permissions"]
 
 
 def test_practitioner_membership_is_unique_per_organization(session, two_orgs):
