@@ -28,3 +28,18 @@
   E2E proven against real FastAPI + PostgreSQL with no mock data.
 - Mechanical path fix: `../medistock` → `../../AI-EdgeRunners/medistock` in
   engineering docs after the workspace reorganisation.
+
+## Clinical Core — PF5 (2026-08-15)
+
+- Added `app/clinical/` (migration 0005): `Patient` (org-owned, per-org DNI
+  partial unique), `Visit` (attended encounter; optional confirmed-appointment
+  origin with derived practitioner/location, or walk-in), `ServiceExecution`
+  (per-visit executed services, `UNIQUE(org, visit, service)`, point-in-time
+  `executed_price` snapshot).
+- Six new permission codes (`patients.*`, `visits.*`, `executions.*`) seeded
+  and granted to every `system` role.
+- All three clinical creates are PF4-idempotent; audit provenance atomic per
+  mutation (PF3); composite FKs make cross-tenant states structurally
+  impossible (PF1).
+- Shared PF4 claim/settle helpers extracted into `app/idempotency/service.py`
+  (scheduling refactored onto them).

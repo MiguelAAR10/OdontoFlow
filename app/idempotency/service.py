@@ -88,6 +88,54 @@ class CommandOutcome(NamedTuple):
     outcome: dict | None = None
 
 
+def claim_receipt(
+    session: Session, resolved: ExecutionContext, idempotency: IdempotencyClaim | None
+) -> CommandReceipt | None:
+    """Stage the idempotency claim as the transaction's first statement (§16.1).
+
+    Shared by every idempotent command service: the claim row is added and
+    flushed before anything else, so a duplicate key surfaces as ``23505`` on
+    ``uq_command_receipts_org_operation_key`` before permission evaluation,
+    preflight reads, row locks or the domain insert — the command never holds
+    a domain lock while waiting on the receipt index, and a rolled-back
+    command never leaves a claim (I7/C3).
+    """
+    if idempotency is None:
+        return None
+    receipt = CommandReceipt(
+        organization_id=resolved.organization_id,
+        principal_id=resolved.principal_id,
+        operation=idempotency.operation,
+        idempotency_key=idempotency.key,
+        request_fingerprint=idempotency.fingerprint,
+        request_id=resolved.request_id,
+        correlation_id=resolved.correlation_id,
+    )
+    session.add(receipt)
+    session.flush()
+    return receipt
+
+
+def settle_receipt(
+    receipt: CommandReceipt | None,
+    *,
+    resource_type: str,
+    resource_id: str,
+    outcome_json: dict,
+) -> None:
+    """Fill the claim's outcome before commit (§16.1 step 6, I5/I13).
+
+    The receipt row, the mutation and the audit row land in the same
+    transaction or not at all, so a committed receipt always carries its
+    logical outcome and a rolled-back command leaves no trace.
+    """
+    if receipt is None:
+        return
+    receipt.resource_type = resource_type
+    receipt.resource_id = resource_id
+    receipt.outcome_json = outcome_json
+
+
 def _normalize(value):
     """Canonical form of one command parameter (I4)."""
     if isinstance(value, datetime):

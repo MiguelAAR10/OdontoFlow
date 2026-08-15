@@ -50,6 +50,8 @@ this diagram if the two ever disagree.
 | `app/scheduling` | `AvailabilityRule`, `ScheduleBlock`, `Appointment`, the slot engine, booking/cancel/reschedule | `availability.py` is pure stdlib logic — no DB, no FastAPI import |
 | `app/iam` | `Principal`, `Membership`, `Permission`, `Role`, `RolePermission`, `RoleAssignment`, `ExecutionContext` | permission-based authorization |
 | `app/audit` | `AuditEvent` | append-only, no FKs into domain tables, polymorphic `entity_id` |
+| `app/idempotency` | `CommandReceipt` + `run_idempotent_command` | PF4: claim-first exactly-once for mutations, replay of stored outcomes |
+| `app/clinical` | `Patient`, `Visit`, `ServiceExecution` | PF5: org-owned patients, attended encounters, executed services with price snapshot |
 
 `app/context.py` (HTTP context adapter), `app/tenancy.py` (pre-PF3 bootstrap-organization seam, now superseded
 by `ExecutionContext` for booking/cancel/reschedule but still the fallback), `app/db.py` (engine/session),

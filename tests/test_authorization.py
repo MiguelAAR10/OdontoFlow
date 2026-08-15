@@ -769,7 +769,8 @@ def test_the_authorization_query_reads_no_role_name_column():
 def test_the_seeded_catalog_is_exactly_the_m7_closed_set(session):
     codes = set(session.scalars(select(Permission.code)))
     assert codes == set(PERMISSION_CODES)
-    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 17
+    # 17 base codes + 6 clinical (PF5) codes.
+    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 23
 
 
 def test_every_permission_code_follows_the_naming_convention():

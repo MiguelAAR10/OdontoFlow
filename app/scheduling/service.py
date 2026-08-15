@@ -42,8 +42,7 @@ from app.commercial.models import Lead
 from app.context import default_context
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
-from app.idempotency.models import CommandReceipt
-from app.idempotency.service import IdempotencyClaim
+from app.idempotency.service import IdempotencyClaim, claim_receipt, settle_receipt
 from app.iam.permissions import (
     APPOINTMENTS_CANCEL,
     APPOINTMENTS_CREATE,
@@ -201,56 +200,6 @@ def _resolved_context(
     return ctx if ctx is not None else default_context(organization_id)
 
 
-def _claim_receipt(
-    session: Session, resolved: ExecutionContext, idempotency: IdempotencyClaim | None
-) -> CommandReceipt | None:
-    """Stage the idempotency claim as the transaction's first statement (§16.1).
-
-    When ``idempotency`` is given (a keyed command), the claim row is added and
-    flushed before anything else: a duplicate key surfaces here as ``23505`` on
-    ``uq_command_receipts_org_operation_key`` — before permission evaluation,
-    preflight reads, row locks or the GiST insert — so the command never holds
-    a GiST or row lock while waiting on the receipt index, and the handler
-    (``app/idempotency/service.py``) can resolve the collision. A duplicate
-    claim therefore also can never outlive a rollback: the claim lives and
-    dies with the mutation (I7/C3).
-    """
-    if idempotency is None:
-        return None
-    receipt = CommandReceipt(
-        organization_id=resolved.organization_id,
-        principal_id=resolved.principal_id,
-        operation=idempotency.operation,
-        idempotency_key=idempotency.key,
-        request_fingerprint=idempotency.fingerprint,
-        request_id=resolved.request_id,
-        correlation_id=resolved.correlation_id,
-    )
-    session.add(receipt)
-    session.flush()
-    return receipt
-
-
-def _settle_receipt(
-    receipt: CommandReceipt | None,
-    *,
-    resource_type: str,
-    resource_id: str,
-    outcome_json: dict,
-) -> None:
-    """Fill the claim's outcome before commit (§16.1 step 6, I5/I13).
-
-    The receipt row, the mutation and the audit row land in the same
-    transaction or not at all, so a committed receipt always carries its
-    logical outcome and a rolled-back command leaves no trace.
-    """
-    if receipt is None:
-        return
-    receipt.resource_type = resource_type
-    receipt.resource_id = resource_id
-    receipt.outcome_json = outcome_json
-
-
 def list_appointments(
     session: Session,
     *,
@@ -391,7 +340,7 @@ def book_appointment(
     org_id = resolved.organization_id
 
     with session.begin():
-        receipt = _claim_receipt(session, resolved, idempotency)
+        receipt = claim_receipt(session, resolved, idempotency)
         if ctx is not None:
             require_permission(session, resolved, APPOINTMENTS_CREATE, location_id=location_id)
         if (
@@ -451,7 +400,7 @@ def book_appointment(
                 "state": CONFIRMED,
             },
         )
-        _settle_receipt(
+        settle_receipt(
             receipt,
             resource_type=APPOINTMENT_ENTITY_TYPE,
             resource_id=str(appointment.id),
@@ -547,7 +496,7 @@ def cancel_appointment(
     org_id = resolved.organization_id
 
     with session.begin():
-        receipt = _claim_receipt(session, resolved, idempotency)
+        receipt = claim_receipt(session, resolved, idempotency)
         appointment = _lock_appointment(session, appointment_id, org_id)
         if ctx is not None:
             require_permission(
@@ -571,7 +520,7 @@ def cancel_appointment(
             before_state=before_state,
             after_state=_appointment_state(appointment),
         )
-        _settle_receipt(
+        settle_receipt(
             receipt,
             resource_type=APPOINTMENT_ENTITY_TYPE,
             resource_id=str(appointment.id),
@@ -621,7 +570,7 @@ def reschedule_appointment(
     org_id = resolved.organization_id
 
     with session.begin():
-        receipt = _claim_receipt(session, resolved, idempotency)
+        receipt = claim_receipt(session, resolved, idempotency)
         appointment = _lock_appointment(session, appointment_id, org_id)
         if ctx is not None:
             require_permission(
@@ -694,7 +643,7 @@ def reschedule_appointment(
             before_state=before_state,
             after_state=_appointment_state(appointment),
         )
-        _settle_receipt(
+        settle_receipt(
             receipt,
             resource_type=APPOINTMENT_ENTITY_TYPE,
             resource_id=str(appointment.id),

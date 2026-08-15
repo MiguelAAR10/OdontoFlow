@@ -20,6 +20,12 @@ APPOINTMENTS_READ = "appointments.read"
 APPOINTMENTS_CREATE = "appointments.create"
 APPOINTMENTS_RESCHEDULE = "appointments.reschedule"
 APPOINTMENTS_CANCEL = "appointments.cancel"
+PATIENTS_READ = "patients.read"
+PATIENTS_CREATE = "patients.create"
+VISITS_READ = "visits.read"
+VISITS_CREATE = "visits.create"
+EXECUTIONS_READ = "executions.read"
+EXECUTIONS_CREATE = "executions.create"
 SERVICES_READ = "services.read"
 SERVICES_MANAGE = "services.manage"
 LEADS_READ = "leads.read"
@@ -42,6 +48,13 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     (APPOINTMENTS_CREATE, "Book appointments"),
     (APPOINTMENTS_RESCHEDULE, "Reschedule appointments"),
     (APPOINTMENTS_CANCEL, "Cancel appointments"),
+    # PF5 — Clinical core (patients, visits, executed services).
+    (PATIENTS_READ, "Read patients"),
+    (PATIENTS_CREATE, "Register patients"),
+    (VISITS_READ, "Read visits"),
+    (VISITS_CREATE, "Register visits"),
+    (EXECUTIONS_READ, "Read service executions"),
+    (EXECUTIONS_CREATE, "Record service executions"),
     (SERVICES_READ, "Read services"),
     (SERVICES_MANAGE, "Administer services"),
     (LEADS_READ, "Read leads"),

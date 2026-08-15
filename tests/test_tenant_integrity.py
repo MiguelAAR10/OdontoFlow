@@ -1018,6 +1018,10 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
         "role_assignments",
         # PF4 — the receipt claim is tenant-scoped by construction (I2).
         "command_receipts",
+        # PF5 — clinical tables carry the same direct tenant column (T1/P10).
+        "patients",
+        "visits",
+        "service_executions",
     }
     assert {row[1] for row in rows} == {"NO"}
     # Practitioner and Principal stay global: no tenant column at all, they

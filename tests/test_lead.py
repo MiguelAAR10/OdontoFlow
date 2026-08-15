@@ -170,4 +170,7 @@ def test_lead_distinct_from_patient(session):
         )
     }
     assert "leads" in tables
-    assert not {"patients", "pacientes", "patient", "lead_patients"} & tables
+    # Lead and Patient are distinct entities: the legacy "pacientes" table
+    # never appears, and the PF5 clinical table is a separate, org-owned one.
+    assert "patients" in tables
+    assert not {"pacientes", "patient", "lead_patients"} & tables

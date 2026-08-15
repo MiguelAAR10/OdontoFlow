@@ -21,6 +21,10 @@ EXPECTED_TABLES = {
     "role_assignments",
     # PF4 — durable command idempotency (migration 0004).
     "command_receipts",
+    # PF5 — clinical core (migration 0005).
+    "patients",
+    "visits",
+    "service_executions",
     "services",
     "locations",
     "practitioners",
@@ -32,7 +36,7 @@ EXPECTED_TABLES = {
     "audit_events",
 }
 
-HEAD_REVISION = "0004"
+HEAD_REVISION = "0005"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (

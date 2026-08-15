@@ -23,6 +23,10 @@ that order and what each NEXT/LATER item actually depends on.
   filters, half-open window), `GET /appointments/{id}`, `GET /leads` (search), `GET /locations`; all
   tenant-scoped, permission-checked, OpenAPI-regenerated; agenda E2E proven against real FastAPI +
   PostgreSQL with the frontend's real adapter (no mocks). Closed at the Accelerated Core Sprint commit.
+- **Clinical core** (PF5) — `Patient` (org-owned, per-org DNI), `Visit` (attended encounter, optional
+  confirmed-appointment origin, walk-in mode), `ServiceExecution` (per-visit executed services with
+  point-in-time price snapshot); PF2 permissions, PF3 audit, PF4 idempotency; 19 clinical tests; the
+  economic/ops contract (`ServiceConsumption`/`Charge`/`Payment`) is designed, not implemented.
 
 ## NOW
 
@@ -32,13 +36,12 @@ that order and what each NEXT/LATER item actually depends on.
 
 ## NEXT
 
-- **Platform Foundation closure.** Close the gaps recorded in `architecture.md` §9 before building further:
-  wire `provision_system_access` into `create_organization`; extend `ExecutionContext`/permission enforcement
+- **Platform Foundation closure.** Close the gaps recorded in `architecture.md` §9: wire
+  `provision_system_access` into `create_organization`; extend `ExecutionContext`/permission enforcement
   beyond the scheduling endpoints; resolve BLOCKER-2 (whether a location-scoped principal can create a
   `Lead`, given `Lead` has no `location_id` today).
-- **Clinical Bridge.** `Appointment → Patient → Visit → ServiceExecution` — proposal synthesized from legacy
-  evidence in `docs/superpowers/handoffs/2026-08-15-accelerated-core-sprint-handoff.md`; the first entity a
-  future Finance or Inventory vertical can safely reference.
+- **Economic/ops vertical.** `ServiceExecution → ServiceConsumption → Product` and
+  `ServiceExecution → Charge → Payment` per `.audit/clinical-core/next-economic-ops-contract.md`.
 
 ## LATER
 
