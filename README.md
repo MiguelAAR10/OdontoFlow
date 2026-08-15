@@ -1,80 +1,57 @@
 # OdontoFlow
 
-**Agent-native multi-tenant clinic operations platform.**
+**A multi-tenant, agent-native clinic operations platform.**
 
-OdontoFlow is the evolution of the legacy `MediStock` Flask backend into a deterministic, PostgreSQL-first operational ERP for dental clinics. It turns a commercial **Lead** into a **confirmed appointment** through typed FastAPI contracts, transactional booking with database-enforced conflict safety, and an audit trail that records who did what and why — ready for humans, agents and integrations to operate the same domain layer.
+OdontoFlow is a deterministic, PostgreSQL-first operational ERP for dental clinics, built as the successor of
+the legacy `MediStock` Flask backend (a read-only reference, not a rewrite target — see
+[`docs/backend-evolution.md`](docs/backend-evolution.md)). It turns a commercial **Lead** into a **confirmed
+appointment** through typed FastAPI contracts, transactional booking with database-enforced conflict safety,
+and an audit trail that records who did what and why — so that humans, agents, and integrations can operate
+the same domain layer under the same rules.
 
-> **Status:** Vertical 1 (Lead-to-Appointment) **CLOSED** · Platform Foundation (PF1–PF3) **implemented** · PF4 (Idempotent Commands) next.
-
----
-
-## Table of contents
-
-1. [Why OdontoFlow](#why-odontoflow)
-2. [Architecture](#architecture)
-3. [Tech stack](#tech-stack)
-4. [Repository layout](#repository-layout)
-5. [Domain model](#domain-model)
-6. [API reference](#api-reference)
-7. [Error contract](#error-contract)
-8. [Invariants & concurrency](#invariants--concurrency)
-9. [Audit & execution context](#audit--execution-context)
-10. [Running locally](#running-locally)
-11. [Testing](#testing)
-12. [Roadmap](#roadmap)
-13. [Documentation](#documentation)
+> **Status:** Vertical 1 (Lead-to-Appointment) **CLOSED** · Platform Foundation (PF1–PF3) **implemented, with
+> known gaps** · PF4 (Idempotent Commands) **next**. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ---
 
 ## Why OdontoFlow
 
-- **Deterministic by design.** Service duration, availability, eligibility and conflicts are authoritative in code + PostgreSQL — never in an LLM. An LLM may suggest; it never decides prices, slots or bookings.
-- **Database is the final authority.** The partial GiST exclusion constraint makes overlapping confirmed appointments for the same practitioner *physically impossible*, even under a two-request race.
-- **Multi-tenant foundation.** `Organization` is the tenant root; every tenant-consistency FK is enforced by PostgreSQL so cross-tenant states are structurally impossible, not just "validated".
-- **Agent-native.** A permission-based IAM (`Principal` = human | agent | integration | system) and an explicit `ExecutionContext` mean future agents call the exact same deterministic services humans use — with auditable provenance.
+- **Deterministic by design.** Service duration, availability, eligibility, and conflicts are authoritative in
+  code + PostgreSQL — never in an LLM. An LLM may suggest; it never decides prices, slots, or bookings.
+- **Database is the final authority.** A partial GiST exclusion constraint makes overlapping confirmed
+  appointments for the same practitioner *physically impossible*, even under a two-request race.
+- **Multi-tenant foundation.** `Organization` is the tenant root; every tenant-consistency relationship is
+  enforced by a PostgreSQL composite foreign key, so cross-tenant states are structurally impossible, not
+  just "validated" in application code.
+- **Agent-native by design, not yet by wiring.** A permission-based IAM (`Principal` = human | agent |
+  integration | system) and an explicit `ExecutionContext` exist so that future agents call the exact same
+  deterministic services humans use, with auditable provenance — but no authentication exists yet, and
+  context/permission enforcement currently covers booking, cancellation, and rescheduling only. See
+  [`docs/architecture.md`](docs/architecture.md) §9 for the full, current gap list.
 
----
+## Architecture, in one picture
 
-## Architecture
+One FastAPI deployment, six explicit module boundaries under `app/` (`commercial`, `catalog`, `organization`,
+`scheduling`, `iam`, `audit`), no message queue, no LLM library anywhere in `app/`. Full detail, module
+responsibilities, and the invariants PostgreSQL enforces: [`docs/architecture.md`](docs/architecture.md).
 
 ```
-HTTP / future agent tool
-        │
-        ▼
-   FastAPI router (thin: HTTP shape → schema → service)
-        │
-        ▼
-   ExecutionContext (explicit: org, principal, request_id, correlation_id)
-        │
-        ▼
-   Application service (owns its transaction; permission checks first)
-        │
-        ▼
-   PostgreSQL (composite tenant FKs + partial GiST exclusion + CHECKs)
-        │
-        ▼
-   AuditEvent (same transaction — atomic with the mutation)
+Caller (HTTP today; future agent tool)
+  → FastAPI router (thin: HTTP shape → schema → service)
+    → ExecutionContext (explicit: org, principal, request_id, correlation_id)
+      → Application service (owns its transaction; permission check first)
+        → PostgreSQL (composite tenant FKs + partial GiST exclusion + CHECKs)
+        → AuditEvent (same transaction — atomic with the mutation)
 ```
 
-**Modular monolith.** One FastAPI deployment, five explicit module boundaries:
+## Current development status
 
-| Module | Responsibility |
-|---|---|
-| `app/commercial` | `Lead` — the pre-clinical commercial identity |
-| `app/catalog` | `Service` — canonical services with authoritative duration |
-| `app/organization` | `Location`, `Practitioner`, `PractitionerCapability`, `PractitionerMembership`, `Organization` |
-| `app/scheduling` | `AvailabilityRule`, `ScheduleBlock`, `Appointment`, slot engine, booking/cancel/reschedule |
-| `app/audit` | `AuditEvent` — append-only provenance, atomic with mutations |
-| `app/iam` | `Principal`, `Membership`, `Permission`, `Role`, `RolePermission`, `RoleAssignment` — permission-based authorization |
-
-**Key rules**
-
-- Duration comes **only** from `Service.duration_minutes`; clients can never supply duration/end/state.
-- Slots are generated by a **pure** engine (`app/scheduling/availability.py`): 15-minute grid in the location's IANA timezone, half-open `[start, end)` semantics.
-- Booking, cancel and reschedule each own one explicit transaction (`session.begin()` before any read) — audit rows commit atomically with the mutation.
-- A practitioner is **global** and cannot be double-booked across organizations (GiST exclusion is practitioner-wide by design).
-
----
+- **Vertical 1 — Lead to Appointment: CLOSED.** Full commercial-to-booking journey, proven end-to-end over
+  HTTP against real PostgreSQL.
+- **Platform Foundation PF1–PF3: CLOSED**, meaning tenant integrity, permission-based IAM, and execution
+  provenance exist and are tested — but PF3 wiring is scoped to three endpoints and authentication does not
+  exist yet. Read [`docs/architecture.md`](docs/architecture.md) §9 before assuming more than that.
+- **PF4 — Idempotent Commands: designed, not implemented.** This is the current unit of work.
 
 ## Tech stack
 
@@ -119,165 +96,13 @@ tests/                   # 274 tests: unit + integration against real PostgreSQL
 
 ---
 
-## Domain model
+## Domain model, API reference, error contract, invariants & audit
 
-```
-Organization ◄──(tenant root)──► Location        Practitioner (global)
-      │                               ▲                 │
-      │                               │                 │
-      ├── Service ◄──────────────┐    │                 ├── PractitionerMembership (×Organization)
-      ├── Lead ──service_need───►│    │                 │
-      │                          │    │                 │
-      ├── PractitionerMembership│    │                 │
-      └── AvailabilityRule ─────┼────┼── practitioner   │
-          ScheduleBlock ────────┼────┼── practitioner   │
-          Appointment ──────────┼────┼── practitioner   ▼
-                                │    └── location     PractitionerCapability (practitioner×service×location)
-                                └──────────►          Appointment ── lead/service/practitioner/location
-                                                      AuditEvent (no FKs; polymorphic entity_id)
-```
-
-| Entity | Tenant ownership | Key invariants |
-|---|---|---|
-| `Organization` | — (root) | tenant + security boundary |
-| `Location` | organization_id | `UNIQUE(organization_id, id)` — composite FK target |
-| `Service` | organization_id | `UNIQUE(organization_id, name)`; duration > 0 |
-| `Lead` | organization_id | source ∈ promotion/referral/direct; phone OR email |
-| `Practitioner` | **global** | no org column |
-| `PractitionerMembership` | — | `UNIQUE(practitioner_id, organization_id)` |
-| `PractitionerCapability` | via composite FKs | cannot mix service/location from different orgs |
-| `AvailabilityRule` / `ScheduleBlock` | via composite FK | `(org, location)` must match; `end > start` |
-| `Appointment` | organization_id | composite FKs for location/service/lead; state ∈ confirmed/cancelled; **partial GiST exclusion** |
-| `AuditEvent` | organization_id | actor, correlation, before/after JSONB |
-| `Principal` | global | type ∈ human/agent/integration/system |
-| `Membership` | Principal × Org | `UNIQUE(principal_id, organization_id)`, active flag |
-| `Role` / `RolePermission` | organization_id | `UNIQUE(org, name)`; configurable permission bundles |
-| `RoleAssignment` | via Membership | `location_id NULL` = org-wide; concrete = that location only |
-
-**Tenant integrity is structural:** e.g. `Appointment` carries `(organization_id, location_id)`, `(organization_id, service_id)` and `(organization_id, lead_id)` composite FKs into `UNIQUE(organization_id, id)` targets — PostgreSQL rejects any cross-tenant combination.
-
----
-
-## API reference
-
-Base path: `/` (all routes under root). OpenAPI: `GET /openapi.json` · Interactive docs: `/docs`.
-
-### Health
-
-| Method | Path | Description | Responses |
-|---|---|---|---|
-| GET | `/health` | Liveness probe | `200 {"status":"ok"}` |
-
-### Commercial — Leads
-
-| Method | Path | Body → Response | Description |
-|---|---|---|---|
-| POST | `/leads` | `LeadCreate` → `LeadRead` (201) | Register a commercial lead |
-| GET | `/leads/{lead_id}` | — → `LeadRead` (200) | Retrieve a lead |
-
-`LeadCreate`: `full_name` (1-255), `contact_phone?`, `contact_email?`, `acquisition_source` (`promotion|referral|direct`), `service_need_id?`.
-Phone is normalized deterministically (digits + leading `+`). At least one contact channel required. No deduplication (out of scope). A Lead is **not** a Patient.
-
-### Catalog — Services
-
-| Method | Path | Body → Response | Description |
-|---|---|---|---|
-| POST | `/services` | `ServiceCreate` → `ServiceRead` (201) | Create a canonical service |
-| GET | `/services` | — → `list[ServiceRead]` (200) | List services (org-scoped, ordered by name) |
-
-`ServiceCreate`: `name` (unique **per organization**), `duration_minutes` (> 0), `is_active?`.
-`duration_minutes` is the **authoritative duration** used by slot query and booking. No pricing in this vertical.
-
-### Organization
-
-| Method | Path | Body → Response | Description |
-|---|---|---|---|
-| POST | `/locations` | `LocationCreate` → `LocationRead` (201) | Create a location (branch) |
-| POST | `/practitioners` | `PractitionerCreate` → `PractitionerRead` (201) | Create a global practitioner |
-| POST | `/capabilities` | `CapabilityCreate` → `CapabilityRead` (201) | Grant practitioner × service × location capability |
-| GET | `/practitioners/eligible?service_id=&location_id=` | — → `list[PractitionerRead]` (200) | Deterministic eligibility query |
-
-`LocationCreate`: `name`, `timezone` (validated against Python's IANA `zoneinfo` — e.g. `America/Lima`, `Europe/Madrid`).
-Capability uniqueness: `(practitioner_id, service_id, location_id)` — DB-authoritative; cross-org combinations rejected by composite FKs.
-
-### Scheduling configuration
-
-| Method | Path | Body → Response | Description |
-|---|---|---|---|
-| POST | `/availability-rules` | `AvailabilityRuleCreate` → `AvailabilityRuleRead` (201) | Recurring availability window |
-| POST | `/schedule-blocks` | `ScheduleBlockCreate` → `ScheduleBlockRead` (201) | Exceptional closed interval |
-
-`AvailabilityRuleCreate`: `practitioner_id`, `location_id`, `day_of_week` (0=Mon..6=Sun), `start_local`/`end_local` (time, half-open).
-`ScheduleBlockCreate`: `practitioner_id`, `location_id`, `start_utc`, `end_utc` (timezone-aware).
-
-### Slot query
-
-| Method | Path | Body → Response | Description |
-|---|---|---|---|
-| POST | `/slots/query` | `SlotQuery` → `list[SlotResult]` (200) | Deterministic available slots |
-
-`SlotQuery`: `service_id`, `location_id`, `window_start`, `window_end` (timezone-aware).
-`SlotResult`: `practitioner_id`, `start`, `end`.
-Candidates are 15-minute-grid aligned in the location's timezone; the whole interval must fit inside recurring availability and intersect neither schedule blocks nor confirmed appointments. Duration comes from the catalog.
-
-### Booking lifecycle
-
-| Method | Path | Body → Response | Description |
-|---|---|---|---|
-| POST | `/appointments` | `AppointmentCreate` → `AppointmentRead` (201) | Book a confirmed appointment |
-| POST | `/appointments/{appointment_id}/cancel` | `{}` → `AppointmentRead` (200) | Cancel (releases the interval) |
-| POST | `/appointments/{appointment_id}/reschedule` | `AppointmentReschedule` → `AppointmentRead` (200) | Move to a new interval (same row, atomic) |
-
-`AppointmentCreate`: `lead_id`, `service_id`, `location_id`, `practitioner_id`, `start` — **only** these; `extra="forbid"` rejects any duration/end/state smuggling.
-`AppointmentReschedule`: `new_start` only.
-`AppointmentRead`: `id`, `lead_id`, `service_id`, `practitioner_id`, `location_id`, `start_utc`, `end_utc`, `state`.
-
-Booking revalidates everything inside one transaction (lead/service/location/practitioner exist & active, capability active, slot still in `generate_slots`), computes `end = start + Service.duration_minutes`, and relies on the GiST exclusion as the final concurrency authority. Reschedule updates the **same** row (self-excluded from its own conflict set) and writes one audit record with old/new intervals.
-
----
-
-## Error contract
-
-Every error uses one stable envelope:
-
-```json
-{ "error": { "code": "APPOINTMENT_CONFLICT", "message": "...", "details": {} } }
-```
-
-| HTTP | Code | When |
-|---|---|---|
-| 422 | `INVALID_INPUT` | Malformed/structurally invalid input |
-| 404 | `NOT_FOUND` | Referenced entity missing |
-| 409 | `ENTITY_INACTIVE` | Referenced entity inactive |
-| 409 | `CAPABILITY_MISSING` | No active capability for practitioner × service × location |
-| 409 | `SLOT_BLOCKED` | Slot outside availability / blocked / occupied |
-| 409 | `APPOINTMENT_CONFLICT` | GiST exclusion violation (`23P01`) or exhausted booking deadlock retry (`40P01`) |
-| 500 | — | Unexpected internal error (never leaks SQL/constraint names) |
-
-Never exposed: SQL, constraint names, SQLSTATE values, stack traces.
-
----
-
-## Invariants & concurrency
-
-- **Partial GiST exclusion** on `appointments`:
-  `EXCLUDE USING gist (practitioner_id WITH =, tstzrange(start_utc, end_utc, '[)') WITH &&) WHERE state = 'confirmed'`
-  — two confirmed appointments for the same practitioner can never overlap, across any organization. Cancelled rows never block reuse.
-- **Booking race:** two requests may both pass preflight; PostgreSQL lets exactly one win (`23P01` → `409 APPOINTMENT_CONFLICT`). A real deadlock (`40P01`) during booking triggers exactly **one** full retry (Task 8 policy); a second `40P01` returns the stable conflict.
-- **Cancel/reschedule** take `SELECT ... FOR UPDATE` on the appointment row, serializing same-row mutations; races leave one coherent final state and a coherent audit history.
-- **Tenant consistency:** composite FKs make cross-organization relational states structurally impossible.
-
----
-
-## Audit & execution context
-
-Every mutation writes exactly one `AuditEvent` in the same transaction:
-
-- `appointment.created` · `appointment.cancelled` · `appointment.rescheduled`
-- before/after JSONB payloads carry `{id, start_utc, end_utc, state}` (reschedule: old → new intervals)
-- provenance comes from the explicit `ExecutionContext`: `organization_id`, `principal_id`, `principal_type` (`human|agent|integration|system`), `request_id`, `correlation_id` (header `X-Correlation-Id` or derived from request id)
-
-A human and an agent performing the same allowed operation produce identical business behavior with **different auditable provenance**. Authorization is permission-based (`appointments.create`, `appointments.reschedule`, `appointments.cancel`, …) via `RolePermission` bundles — never hardcoded role names.
+Moved to [`docs/architecture.md`](docs/architecture.md) to keep this file scannable in five minutes.
+Quick pointers: the full HTTP contract is generated at `docs/api/openapi.yaml` / `openapi.json` and served
+live at `/docs`; every error uses one stable envelope, `{"error": {"code", "message", "details"}}`; the
+practitioner-overlap invariant is a partial GiST exclusion constraint PostgreSQL enforces, not application
+code.
 
 ---
 
@@ -322,20 +147,29 @@ The suite covers: migrations upgrade/downgrade cycles, GiST overlap rejection wi
 
 ## Roadmap
 
-- [x] **Vertical 1 — Lead to Appointment** (Tasks 1–10): catalog, organization, availability engine, transactional booking, cancel/reschedule, FastAPI API, E2E proof — **CLOSED**
-- [x] **PF0** Platform foundation design spec (multi-tenant, agent-native)
-- [x] **PF1** Organization & tenant integrity (composite FKs, bootstrap migration, global practitioner + memberships, org-scoped service names, practitioner-global GiST preserved)
-- [x] **PF2** Principal & authorization (permission-based IAM, org-wide + location scopes, DB-enforced tenant bounds)
-- [x] **PF3** ExecutionContext & audit provenance (explicit context, request/correlation ids, real actor attribution, atomic audit)
-- [ ] **PF4** Idempotent commands (PostgreSQL-durable `CommandReceipt`, replay/mismatch semantics, no Redis)
-- [ ] **Platform Readiness → Clinical Bridge** (Patient, Visit, ServiceExecution), Finance (Charge/Payment), Inventory/Operations, agents as deterministic tools, external adapters (Calendar/WhatsApp/NubeFact)
+- **DONE** — Lead → Appointment (Vertical 1, closed); multi-tenant foundation (PF1); authorization (PF2);
+  execution provenance (PF3).
+- **NOW** — PF4, Idempotent Commands (PostgreSQL-durable `CommandReceipt`, no Redis).
+- **NEXT** — Platform Foundation gap closure; Clinical Bridge (`Appointment → Patient → Visit → ServiceExecution`).
+- **LATER** — Finance, Inventory/Operations, external adapters, operational optimization, agent execution.
+
+Full detail: [`docs/roadmap.md`](docs/roadmap.md).
 
 ---
 
 ## Documentation
 
-| Doc | Contents |
+Start at [`docs/README.md`](docs/README.md) — it explains the difference between curated docs (living,
+rewritten as the system changes) and the `docs/superpowers/` engineering record (specs, plans, evidence,
+handoffs — append-only, one authoritative snapshot per file).
+
+| Doc | Answers |
 |---|---|
+| [`docs/product-vision.md`](docs/product-vision.md) | What is OdontoFlow, and where is it going (clearly marked FUTURE)? |
+| [`docs/architecture.md`](docs/architecture.md) | How does the system implemented today actually work, including known gaps? |
+| [`docs/backend-platform-blueprint.md`](docs/backend-platform-blueprint.md) | Detailed technical authority: principles + why, full vertical lifecycle, PF1–PF4 rationale, MediStock migration map |
+| [`docs/backend-evolution.md`](docs/backend-evolution.md) | How did the backend get here, commit by commit? |
+| [`docs/roadmap.md`](docs/roadmap.md) | DONE / NOW / NEXT / LATER |
 | `docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md` | Approved Vertical 1 design |
 | `docs/superpowers/specs/2026-08-14-platform-foundation-design.md` | Approved PF0 platform design (tenant model, IAM, context, idempotency, PF1–PF4) |
 | `docs/superpowers/evidence/*` | Platform readiness audits (data ownership, actors/commands) |
