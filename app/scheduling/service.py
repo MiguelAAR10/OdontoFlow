@@ -42,6 +42,8 @@ from app.commercial.models import Lead
 from app.context import default_context
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
+from app.idempotency.models import CommandReceipt
+from app.idempotency.service import IdempotencyClaim
 from app.iam.permissions import (
     APPOINTMENTS_CANCEL,
     APPOINTMENTS_CREATE,
@@ -198,6 +200,78 @@ def _resolved_context(
     return ctx if ctx is not None else default_context(organization_id)
 
 
+def _claim_receipt(
+    session: Session, resolved: ExecutionContext, idempotency: IdempotencyClaim | None
+) -> CommandReceipt | None:
+    """Stage the idempotency claim as the transaction's first statement (§16.1).
+
+    When ``idempotency`` is given (a keyed command), the claim row is added and
+    flushed before anything else: a duplicate key surfaces here as ``23505`` on
+    ``uq_command_receipts_org_operation_key`` — before permission evaluation,
+    preflight reads, row locks or the GiST insert — so the command never holds
+    a GiST or row lock while waiting on the receipt index, and the handler
+    (``app/idempotency/service.py``) can resolve the collision. A duplicate
+    claim therefore also can never outlive a rollback: the claim lives and
+    dies with the mutation (I7/C3).
+    """
+    if idempotency is None:
+        return None
+    receipt = CommandReceipt(
+        organization_id=resolved.organization_id,
+        principal_id=resolved.principal_id,
+        operation=idempotency.operation,
+        idempotency_key=idempotency.key,
+        request_fingerprint=idempotency.fingerprint,
+        request_id=resolved.request_id,
+        correlation_id=resolved.correlation_id,
+    )
+    session.add(receipt)
+    session.flush()
+    return receipt
+
+
+def _settle_receipt(
+    receipt: CommandReceipt | None,
+    *,
+    resource_type: str,
+    resource_id: str,
+    outcome_json: dict,
+) -> None:
+    """Fill the claim's outcome before commit (§16.1 step 6, I5/I13).
+
+    The receipt row, the mutation and the audit row land in the same
+    transaction or not at all, so a committed receipt always carries its
+    logical outcome and a rolled-back command leaves no trace.
+    """
+    if receipt is None:
+        return
+    receipt.resource_type = resource_type
+    receipt.resource_id = resource_id
+    receipt.outcome_json = outcome_json
+
+
+def _appointment_outcome(appointment: Appointment, *, status: str = "applied") -> dict:
+    """The durable logical outcome of an appointment command (I5).
+
+    Domain-level result only — never an HTTP status code or serialized
+    response body. ``status`` is the command's own status (``applied``); the
+    appointment's state is its own field.
+    """
+    return {
+        "status": status,
+        "resource_type": APPOINTMENT_ENTITY_TYPE,
+        "resource_id": str(appointment.id),
+        "state": appointment.state,
+        "start_utc": appointment.start_utc.astimezone(UTC).isoformat(),
+        "end_utc": appointment.end_utc.astimezone(UTC).isoformat(),
+        "organization_id": appointment.organization_id,
+        "lead_id": appointment.lead_id,
+        "service_id": appointment.service_id,
+        "practitioner_id": appointment.practitioner_id,
+        "location_id": appointment.location_id,
+    }
+
+
 def book_appointment(
     session: Session,
     *,
@@ -208,6 +282,7 @@ def book_appointment(
     practitioner_id: int,
     start: datetime,
     organization_id: int | None = None,
+    idempotency: IdempotencyClaim | None = None,
 ) -> Appointment:
     """Confirm one appointment atomically and return it.
 
@@ -217,6 +292,12 @@ def book_appointment(
     the pre-auth fixtures working. The authoritative permission check is the
     first statement of the transaction (E6/F-19); the tenant is taken from the
     context, never from a body field (X3).
+
+    ``idempotency`` (PF4, §16.1) is the claim staged as the transaction's
+    FIRST statement — before the permission check — when the caller supplied
+    an ``Idempotency-Key``; the receipt row is settled with the logical
+    outcome just before commit and commits atomically with the appointment
+    and its audit row.
 
     ``start`` must be timezone-aware; it is normalized to UTC and the end is
     derived from the catalog duration. There is deliberately no ``end`` or
@@ -236,6 +317,7 @@ def book_appointment(
     org_id = resolved.organization_id
 
     with session.begin():
+        receipt = _claim_receipt(session, resolved, idempotency)
         if ctx is not None:
             require_permission(session, resolved, APPOINTMENTS_CREATE, location_id=location_id)
         if (
@@ -294,6 +376,12 @@ def book_appointment(
                 "end_utc": end_utc.isoformat(),
                 "state": CONFIRMED,
             },
+        )
+        _settle_receipt(
+            receipt,
+            resource_type=APPOINTMENT_ENTITY_TYPE,
+            resource_id=str(appointment.id),
+            outcome_json=_appointment_outcome(appointment),
         )
 
     return appointment
@@ -355,6 +443,7 @@ def cancel_appointment(
     *,
     ctx: ExecutionContext | None = None,
     organization_id: int | None = None,
+    idempotency: IdempotencyClaim | None = None,
 ) -> Appointment:
     """Cancel one confirmed appointment atomically and return it.
 
@@ -364,6 +453,12 @@ def cancel_appointment(
     location (F-4); the tenant-scoped lock is the existence check, so another
     organization's appointment is ``NOT_FOUND`` exactly like a non-existent one
     (E8, tenant isolation).
+
+    ``idempotency`` (PF4) is the claim staged as the transaction's FIRST
+    statement — before the row lock — when the caller supplied an
+    ``Idempotency-Key``; the receipt is settled with the logical outcome just
+    before commit (the cancelled state, interval preserved) and commits
+    atomically with the mutation and its audit row.
 
     The interval is preserved: only ``state`` changes. Because the GiST
     exclusion is partial (``WHERE state = 'confirmed'``), the cancelled row
@@ -378,6 +473,7 @@ def cancel_appointment(
     org_id = resolved.organization_id
 
     with session.begin():
+        receipt = _claim_receipt(session, resolved, idempotency)
         appointment = _lock_appointment(session, appointment_id, org_id)
         if ctx is not None:
             require_permission(
@@ -401,6 +497,12 @@ def cancel_appointment(
             before_state=before_state,
             after_state=_appointment_state(appointment),
         )
+        _settle_receipt(
+            receipt,
+            resource_type=APPOINTMENT_ENTITY_TYPE,
+            resource_id=str(appointment.id),
+            outcome_json=_appointment_outcome(appointment),
+        )
 
     return appointment
 
@@ -412,12 +514,19 @@ def reschedule_appointment(
     *,
     ctx: ExecutionContext | None = None,
     organization_id: int | None = None,
+    idempotency: IdempotencyClaim | None = None,
 ) -> Appointment:
     """Move one confirmed appointment to a new interval atomically.
 
     ``ctx`` is the explicit application-boundary contract; when omitted the
     trusted/default context applies (compatibility). The authoritative
     permission check runs against the appointment's own location (F-4).
+
+    ``idempotency`` (PF4) is the claim staged as the transaction's FIRST
+    statement — before the row lock — when the caller supplied an
+    ``Idempotency-Key``; the receipt is settled with the logical outcome (the
+    new interval, still confirmed) just before commit and commits atomically
+    with the mutation and its audit row.
 
     The *same* row is updated: there is no new appointment, no temporary
     cancellation and therefore no visible ``old cancelled + new confirmed``
@@ -438,6 +547,7 @@ def reschedule_appointment(
     org_id = resolved.organization_id
 
     with session.begin():
+        receipt = _claim_receipt(session, resolved, idempotency)
         appointment = _lock_appointment(session, appointment_id, org_id)
         if ctx is not None:
             require_permission(
@@ -509,6 +619,12 @@ def reschedule_appointment(
             action=APPOINTMENT_RESCHEDULED_ACTION,
             before_state=before_state,
             after_state=_appointment_state(appointment),
+        )
+        _settle_receipt(
+            receipt,
+            resource_type=APPOINTMENT_ENTITY_TYPE,
+            resource_id=str(appointment.id),
+            outcome_json=_appointment_outcome(appointment),
         )
 
     return appointment

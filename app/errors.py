@@ -12,6 +12,7 @@ HTTP_STATUS_BY_CODE = {
     "CAPABILITY_MISSING": 409,
     "SLOT_BLOCKED": 409,
     "APPOINTMENT_CONFLICT": 409,
+    "IDEMPOTENCY_KEY_REUSED": 409,
 }
 
 DEFAULT_MESSAGE_BY_CODE = {
@@ -21,6 +22,7 @@ DEFAULT_MESSAGE_BY_CODE = {
     "CAPABILITY_MISSING": "The practitioner is not capable of this service at this location.",
     "SLOT_BLOCKED": "The requested time slot is blocked.",
     "APPOINTMENT_CONFLICT": "The requested appointment slot is no longer available.",
+    "IDEMPOTENCY_KEY_REUSED": "The idempotency key was already used by a different request.",
 }
 
 POSTGRES_EXCLUSION_VIOLATION = "23P01"
@@ -33,6 +35,7 @@ class ErrorCode(str, Enum):
     CAPABILITY_MISSING = "CAPABILITY_MISSING"
     SLOT_BLOCKED = "SLOT_BLOCKED"
     APPOINTMENT_CONFLICT = "APPOINTMENT_CONFLICT"
+    IDEMPOTENCY_KEY_REUSED = "IDEMPOTENCY_KEY_REUSED"
 
 
 class AppError(Exception):

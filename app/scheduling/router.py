@@ -5,19 +5,34 @@ The router stays thin: HTTP shape -> Pydantic schema -> existing application
 service / query helper -> typed response. Booking performs no preliminary DB
 queries here: ``book_appointment`` owns its transaction and must receive an
 idle session.
+
+PF4 adds one transport job only (C10): the optional ``Idempotency-Key`` header
+is read and passed straight through to the application command handler
+(``app.idempotency.service.run_idempotent_command``), which owns the receipt
+claim, the replay and the ``IDEMPOTENCY_KEY_REUSED`` rejection. On a replay
+the transport adds the optional, non-authoritative ``Idempotent-Replay: true``
+response header (I9) and renders the stored logical outcome (I5) into the same
+response schema the original call produced.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.context import resolve_http_context
 from app.db import get_db
 from app.errors import AppError, ErrorCode
+from app.idempotency.service import (
+    OP_APPOINTMENTS_BOOK,
+    OP_APPOINTMENTS_CANCEL,
+    OP_APPOINTMENTS_RESCHEDULE,
+    run_idempotent_command,
+)
 from app.scheduling.query import (
     create_availability_rule,
     create_schedule_block,
@@ -45,6 +60,35 @@ router = APIRouter()
 
 DEADLOCK_SQLSTATE = "40P01"
 RETRY_SAFE_MESSAGE = "The requested appointment slot is no longer available."
+
+#: The optional header the transport reads (PF4 C10/I9). Not a schema field:
+#: callers never send it in the body.
+IDEMPOTENCY_HEADER = "Idempotency-Key"
+REPLAY_HEADER = "Idempotent-Replay"
+
+
+def _idempotency_key(request: Request) -> str | None:
+    value = request.headers.get(IDEMPOTENCY_HEADER)
+    if value is None or value == "":
+        return None
+    return value
+
+
+def _appointment_read_from_outcome(outcome: dict) -> AppointmentRead:
+    """I5: render the stored logical outcome into the original response schema.
+
+    The transport owns the rendering; the domain owns the stored outcome.
+    """
+    return AppointmentRead(
+        id=int(outcome["resource_id"]),
+        lead_id=outcome["lead_id"],
+        service_id=outcome["service_id"],
+        practitioner_id=outcome["practitioner_id"],
+        location_id=outcome["location_id"],
+        start_utc=datetime.fromisoformat(outcome["start_utc"]),
+        end_utc=datetime.fromisoformat(outcome["end_utc"]),
+        state=outcome["state"],
+    )
 
 
 def _sqlstate(exc) -> str | None:
@@ -126,13 +170,32 @@ def query_slots_route(
 def create_appointment_route(
     payload: AppointmentCreate,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     operation: Callable = Depends(get_booking_operation),
 ) -> AppointmentRead:
     ctx = resolve_http_context(request)
-    return book_appointment_with_retry(
-        db, operation=operation, ctx=ctx, **payload.model_dump()
-    )
+    key = _idempotency_key(request)
+    params = payload.model_dump()
+
+    def _command(session: Session, **kwargs):
+        return run_idempotent_command(
+            session,
+            operation=operation,
+            operation_name=OP_APPOINTMENTS_BOOK,
+            key=key,
+            ctx=ctx,
+            params=params,
+            **kwargs,
+        )
+
+    # The 40P01 retry wraps the whole idempotent command (C8): a deadlock
+    # rolls the claim back with the attempt (C3) and the retry re-claims.
+    outcome = book_appointment_with_retry(db, operation=_command, **params)
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+        return _appointment_read_from_outcome(outcome.outcome)
+    return outcome.result
 
 
 # Cancellation and rescheduling deliberately skip the booking retry policy:
@@ -146,19 +209,50 @@ def create_appointment_route(
 def cancel_appointment_route(
     appointment_id: int,
     request: Request,
+    response: Response,
     payload: AppointmentCancel | None = None,
     db: Session = Depends(get_db),
 ) -> AppointmentRead:
     ctx = resolve_http_context(request)
-    return cancel_appointment(db, appointment_id, ctx=ctx)
+    key = _idempotency_key(request)
+    params = {"appointment_id": appointment_id}
+    outcome = run_idempotent_command(
+        db,
+        operation=cancel_appointment,
+        operation_name=OP_APPOINTMENTS_CANCEL,
+        key=key,
+        ctx=ctx,
+        params=params,
+        appointment_id=appointment_id,
+    )
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+        return _appointment_read_from_outcome(outcome.outcome)
+    return outcome.result
 
 
 @router.post("/appointments/{appointment_id}/reschedule", response_model=AppointmentRead, status_code=200)
 def reschedule_appointment_route(
     appointment_id: int,
     request: Request,
+    response: Response,
     payload: AppointmentReschedule,
     db: Session = Depends(get_db),
 ) -> AppointmentRead:
     ctx = resolve_http_context(request)
-    return reschedule_appointment(db, appointment_id, payload.new_start, ctx=ctx)
+    key = _idempotency_key(request)
+    params = {"appointment_id": appointment_id, "new_start": payload.new_start}
+    outcome = run_idempotent_command(
+        db,
+        operation=reschedule_appointment,
+        operation_name=OP_APPOINTMENTS_RESCHEDULE,
+        key=key,
+        ctx=ctx,
+        params=params,
+        appointment_id=appointment_id,
+        new_start=payload.new_start,
+    )
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+        return _appointment_read_from_outcome(outcome.outcome)
+    return outcome.result

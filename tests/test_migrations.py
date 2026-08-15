@@ -19,6 +19,8 @@ EXPECTED_TABLES = {
     "roles",
     "role_permissions",
     "role_assignments",
+    # PF4 — durable command idempotency (migration 0004).
+    "command_receipts",
     "services",
     "locations",
     "practitioners",
@@ -30,7 +32,7 @@ EXPECTED_TABLES = {
     "audit_events",
 }
 
-HEAD_REVISION = "0003"
+HEAD_REVISION = "0004"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (
