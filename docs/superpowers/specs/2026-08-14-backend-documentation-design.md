@@ -35,7 +35,7 @@ No application, schema, migration, endpoint, or business behavior changes in thi
 
 ## Architecture Content Requirements
 
-The backend architecture document describes the actual flow:
+The backend architecture document describes the implemented appointment lifecycle flow:
 
 `FastAPI router -> request schema -> explicit ExecutionContext -> application service -> PostgreSQL -> AuditEvent`.
 
@@ -46,6 +46,7 @@ It must distinguish implemented behavior from intended platform behavior. The do
 - HTTP currently resolves every request as the seeded `system` principal in the bootstrap organization; this is a development compatibility boundary, not production authentication.
 - `create_organization` does not yet call `provision_system_access`, so a new organization is not atomically provisioned with the required system membership and role assignment.
 - Explicit `ExecutionContext` and permission enforcement are currently wired to appointment booking, cancellation, and rescheduling; the remaining tenant-scoped reads and writes retain their pre-PF3 transport path.
+- Appointment services retain a compatibility path where a direct caller can omit `ctx`; that path resolves a default context and does not execute the explicit permission guard. It is test compatibility, not an authorization boundary.
 
 The release reports these as platform-hardening work before Clinical Bridge. It does not change application behavior.
 
