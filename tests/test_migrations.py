@@ -25,6 +25,11 @@ EXPECTED_TABLES = {
     "patients",
     "visits",
     "service_executions",
+    # PF6 — economic & operations core (migration 0006).
+    "products",
+    "service_consumptions",
+    "charges",
+    "payments",
     "services",
     "locations",
     "practitioners",
@@ -36,7 +41,7 @@ EXPECTED_TABLES = {
     "audit_events",
 }
 
-HEAD_REVISION = "0005"
+HEAD_REVISION = "0006"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (

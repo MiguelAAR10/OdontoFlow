@@ -43,3 +43,18 @@
   impossible (PF1).
 - Shared PF4 claim/settle helpers extracted into `app/idempotency/service.py`
   (scheduling refactored onto them).
+
+## Economic & Operations Bridge — PF6 (2026-08-15)
+
+- Added `app/economics/` (migration 0006): `Product` (org-owned catalog,
+  declared kind consumible/reventa, no stock authority), `ServiceConsumption`
+  (execution-anchored, `UNIQUE(org, execution, product)`, quantity/price
+  snapshot), `Charge` (1:1 per execution, amount from the execution price
+  snapshot), `Payment` (N:1, derived paid/outstanding, deterministic
+  overpayment rejection via charge row lock).
+- Eight new permission codes seeded and granted to every `system` role.
+- PF4 claim-first idempotency on all four creates; PF3 audit atomic.
+- PF gap fix: `create_organization` provisions system access atomically
+  (PR7) — runtime organizations are immediately operable.
+- Frontend (separate repo): Patients screen integrated with the real clinical
+  API (list/create via OpenAPI types, loading/error states).

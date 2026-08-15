@@ -1022,6 +1022,11 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
         "patients",
         "visits",
         "service_executions",
+        # PF6 — economic & operations tables (T1).
+        "products",
+        "service_consumptions",
+        "charges",
+        "payments",
     }
     assert {row[1] for row in rows} == {"NO"}
     # Practitioner and Principal stay global: no tenant column at all, they

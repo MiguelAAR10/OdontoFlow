@@ -27,6 +27,11 @@ that order and what each NEXT/LATER item actually depends on.
   confirmed-appointment origin, walk-in mode), `ServiceExecution` (per-visit executed services with
   point-in-time price snapshot); PF2 permissions, PF3 audit, PF4 idempotency; 19 clinical tests; the
   economic/ops contract (`ServiceConsumption`/`Charge`/`Payment`) is designed, not implemented.
+- **Economic & operations core** (PF6) — `Product` (org-owned, declared kind, no stock authority),
+  `ServiceConsumption` (execution-anchored, price snapshot, one product per line), `Charge` (1:1 per
+  execution, amount from the execution snapshot), `Payment` (N:1, derived paid/outstanding, deterministic
+  overpayment rejection via row lock); 20 economic tests; runtime `create_organization` now provisions
+  system access atomically (PR7 gap fix).
 
 ## NOW
 
@@ -36,12 +41,12 @@ that order and what each NEXT/LATER item actually depends on.
 
 ## NEXT
 
-- **Platform Foundation closure.** Close the gaps recorded in `architecture.md` §9: wire
-  `provision_system_access` into `create_organization`; extend `ExecutionContext`/permission enforcement
-  beyond the scheduling endpoints; resolve BLOCKER-2 (whether a location-scoped principal can create a
-  `Lead`, given `Lead` has no `location_id` today).
-- **Economic/ops vertical.** `ServiceExecution → ServiceConsumption → Product` and
-  `ServiceExecution → Charge → Payment` per `.audit/clinical-core/next-economic-ops-contract.md`.
+- **Platform Foundation closure.** Close the remaining gaps in `architecture.md` §9: extend
+  `ExecutionContext`/permission enforcement beyond the scheduling endpoints; resolve BLOCKER-2 (whether a
+  location-scoped principal can create a `Lead`, given `Lead` has no `location_id` today).
+- **Inventory vertical.** `InventoryMovement` (append-only ledger) → derived `InventoryBalance` per
+  `.audit/economic-ops/next-inventory-contract.md`; consumption will emit its SALIDA movement in the same
+  transaction.
 
 ## LATER
 

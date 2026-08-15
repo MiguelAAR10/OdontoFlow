@@ -83,6 +83,10 @@ def clean_tables(migrated_engine):
         }
         tables = (
             "command_receipts",
+            "payments",
+            "charges",
+            "service_consumptions",
+            "products",
             "service_executions",
             "visits",
             "patients",

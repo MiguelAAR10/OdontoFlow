@@ -491,7 +491,9 @@ def test_a_role_from_another_organization_cannot_be_assigned(session, two_orgs):
         },
     )
     assert "fk_role_assignments_organization_role" in error
-    assert session.scalar(select(func.count()).select_from(RoleAssignment)) == 1  # system only
+    # System grants for both tenants (provisioned at creation, PR7) + the
+    # human's own role: the rejected cross-org assignment added nothing.
+    assert session.scalar(select(func.count()).select_from(RoleAssignment)) == 3
 
 
 def test_a_membership_from_another_organization_cannot_be_assigned(session, two_orgs):
@@ -769,8 +771,8 @@ def test_the_authorization_query_reads_no_role_name_column():
 def test_the_seeded_catalog_is_exactly_the_m7_closed_set(session):
     codes = set(session.scalars(select(Permission.code)))
     assert codes == set(PERMISSION_CODES)
-    # 17 base codes + 6 clinical (PF5) codes.
-    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 23
+    # 17 base + 6 clinical (PF5) + 8 economic/ops (PF6) codes.
+    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 31
 
 
 def test_every_permission_code_follows_the_naming_convention():
@@ -820,8 +822,23 @@ def test_the_system_principal_is_permission_checked_like_any_other(session):
         PERMISSION_CODES
     )
     assert has_permission(session, SYSTEM_PRINCIPAL_ID, org, APPOINTMENTS_CREATE) is True
-    # And it is denied in an organization where it holds no membership.
-    other = create_organization(session, "Sin sistema").id
+    # Runtime organizations provision the same full grant atomically (PR7 gap
+    # fix): the platform actor is permission-checked, never bypassed, there.
+    other = create_organization(session, "Con sistema").id
+    assert has_permission(session, SYSTEM_PRINCIPAL_ID, other, APPOINTMENTS_CREATE) is True
+    assert effective_permission_codes(session, SYSTEM_PRINCIPAL_ID, other) == set(
+        PERMISSION_CODES
+    )
+
+    # Revocation is identical in both: deactivating a membership removes the
+    # authority immediately (E3) — this is the no-bypass proof.
+    other_membership = session.scalar(
+        select(Membership).where(
+            Membership.organization_id == other,
+            Membership.principal_id == SYSTEM_PRINCIPAL_ID,
+        )
+    )
+    set_membership_active(session, other_membership.id, False)
     assert has_permission(session, SYSTEM_PRINCIPAL_ID, other, APPOINTMENTS_CREATE) is False
 
     membership = session.scalar(

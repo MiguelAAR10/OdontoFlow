@@ -26,6 +26,14 @@ VISITS_READ = "visits.read"
 VISITS_CREATE = "visits.create"
 EXECUTIONS_READ = "executions.read"
 EXECUTIONS_CREATE = "executions.create"
+PRODUCTS_READ = "products.read"
+PRODUCTS_CREATE = "products.create"
+CONSUMPTIONS_READ = "consumptions.read"
+CONSUMPTIONS_CREATE = "consumptions.create"
+CHARGES_READ = "charges.read"
+CHARGES_CREATE = "charges.create"
+PAYMENTS_READ = "payments.read"
+PAYMENTS_CREATE = "payments.create"
 SERVICES_READ = "services.read"
 SERVICES_MANAGE = "services.manage"
 LEADS_READ = "leads.read"
@@ -55,6 +63,15 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     (VISITS_CREATE, "Register visits"),
     (EXECUTIONS_READ, "Read service executions"),
     (EXECUTIONS_CREATE, "Record service executions"),
+    # PF6 — Economic & operations core (products, consumptions, charges, payments).
+    (PRODUCTS_READ, "Read products"),
+    (PRODUCTS_CREATE, "Register products"),
+    (CONSUMPTIONS_READ, "Read service consumptions"),
+    (CONSUMPTIONS_CREATE, "Record service consumptions"),
+    (CHARGES_READ, "Read charges"),
+    (CHARGES_CREATE, "Register charges"),
+    (PAYMENTS_READ, "Read payments"),
+    (PAYMENTS_CREATE, "Record payments"),
     (SERVICES_READ, "Read services"),
     (SERVICES_MANAGE, "Administer services"),
     (LEADS_READ, "Read leads"),

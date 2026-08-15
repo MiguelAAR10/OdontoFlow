@@ -343,6 +343,285 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /products:
+    post:
+      summary: Create Product Route
+      operationId: create_product_route_products_post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductRead'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      summary: List Products Route
+      operationId: list_products_route_products_get
+      parameters:
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: kind
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Kind
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProductRead'
+                title: Response List Products Route Products Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /products/{product_id}:
+    get:
+      summary: Get Product Route
+      operationId: get_product_route_products__product_id__get
+      parameters:
+      - name: product_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Product Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductRead'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /executions/{execution_id}/consumptions:
+    post:
+      summary: Create Service Consumption Route
+      operationId: create_service_consumption_route_executions__execution_id__consumptions_post
+      parameters:
+      - name: execution_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Execution Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceConsumptionCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceConsumptionRead'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      summary: List Service Consumptions Route
+      operationId: list_service_consumptions_route_executions__execution_id__consumptions_get
+      parameters:
+      - name: execution_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Execution Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceConsumptionRead'
+                title: Response List Service Consumptions Route Executions  Execution
+                  Id  Consumptions Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /executions/{execution_id}/charges:
+    post:
+      summary: Create Charge Route
+      operationId: create_charge_route_executions__execution_id__charges_post
+      parameters:
+      - name: execution_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Execution Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargeCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChargeRead'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /charges:
+    get:
+      summary: List Charges Route
+      operationId: list_charges_route_charges_get
+      parameters:
+      - name: execution_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Execution Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChargeRead'
+                title: Response List Charges Route Charges Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /charges/{charge_id}:
+    get:
+      summary: Get Charge Route
+      operationId: get_charge_route_charges__charge_id__get
+      parameters:
+      - name: charge_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Charge Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChargeRead'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /charges/{charge_id}/payments:
+    post:
+      summary: Create Payment Route
+      operationId: create_payment_route_charges__charge_id__payments_post
+      parameters:
+      - name: charge_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Charge Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentRead'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      summary: List Payments Route
+      operationId: list_payments_route_charges__charge_id__payments_get
+      parameters:
+      - name: charge_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Charge Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaymentRead'
+                title: Response List Payments Route Charges  Charge Id  Payments Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /locations:
     get:
       summary: List Locations Route
@@ -962,6 +1241,52 @@ components:
       - location_id
       - is_active
       title: CapabilityRead
+    ChargeCreate:
+      properties:
+        amount:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: string
+            pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          - type: 'null'
+          title: Amount
+      additionalProperties: false
+      type: object
+      title: ChargeCreate
+    ChargeRead:
+      properties:
+        id:
+          type: integer
+          title: Id
+        service_execution_id:
+          type: integer
+          title: Service Execution Id
+        amount:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Amount
+        paid:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Paid
+        outstanding:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Outstanding
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - service_execution_id
+      - amount
+      - paid
+      - outstanding
+      - created_at
+      title: ChargeRead
     HTTPValidationError:
       properties:
         detail:
@@ -1159,6 +1484,53 @@ components:
       - phone
       - birth_date
       title: PatientRead
+    PaymentCreate:
+      properties:
+        amount:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: string
+            pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Amount
+        method:
+          type: string
+          maxLength: 50
+          minLength: 1
+          title: Method
+      additionalProperties: false
+      type: object
+      required:
+      - amount
+      - method
+      title: PaymentCreate
+    PaymentRead:
+      properties:
+        id:
+          type: integer
+          title: Id
+        charge_id:
+          type: integer
+          title: Charge Id
+        amount:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Amount
+        method:
+          type: string
+          title: Method
+        paid_at:
+          type: string
+          format: date-time
+          title: Paid At
+      type: object
+      required:
+      - id
+      - charge_id
+      - amount
+      - method
+      - paid_at
+      title: PaymentRead
     PractitionerCreate:
       properties:
         display_name:
@@ -1191,6 +1563,56 @@ components:
       - display_name
       - is_active
       title: PractitionerRead
+    ProductCreate:
+      properties:
+        name:
+          type: string
+          maxLength: 150
+          minLength: 1
+          title: Name
+        unit:
+          type: string
+          maxLength: 20
+          minLength: 1
+          title: Unit
+        kind:
+          type: string
+          enum:
+          - consumible
+          - reventa
+          title: Kind
+      additionalProperties: false
+      type: object
+      required:
+      - name
+      - unit
+      - kind
+      title: ProductCreate
+    ProductRead:
+      properties:
+        id:
+          type: integer
+          title: Id
+        name:
+          type: string
+          title: Name
+        unit:
+          type: string
+          title: Unit
+        kind:
+          type: string
+          title: Kind
+        is_active:
+          type: boolean
+          title: Is Active
+      type: object
+      required:
+      - id
+      - name
+      - unit
+      - kind
+      - is_active
+      title: ProductRead
     ScheduleBlockCreate:
       properties:
         practitioner_id:
@@ -1241,6 +1663,73 @@ components:
       - start_utc
       - end_utc
       title: ScheduleBlockRead
+    ServiceConsumptionCreate:
+      properties:
+        product_id:
+          type: integer
+          title: Product Id
+        quantity:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: string
+            pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Quantity
+        unit_price:
+          anyOf:
+          - type: number
+            minimum: 0.0
+          - type: string
+            pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Unit Price
+      additionalProperties: false
+      type: object
+      required:
+      - product_id
+      - quantity
+      - unit_price
+      title: ServiceConsumptionCreate
+    ServiceConsumptionRead:
+      properties:
+        id:
+          type: integer
+          title: Id
+        service_execution_id:
+          type: integer
+          title: Service Execution Id
+        product_id:
+          type: integer
+          title: Product Id
+        product_name:
+          type: string
+          title: Product Name
+        quantity:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Quantity
+        unit_price:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Unit Price
+        amount:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Amount
+        consumed_at:
+          type: string
+          format: date-time
+          title: Consumed At
+      type: object
+      required:
+      - id
+      - service_execution_id
+      - product_id
+      - product_name
+      - quantity
+      - unit_price
+      - amount
+      - consumed_at
+      title: ServiceConsumptionRead
     ServiceCreate:
       properties:
         name:

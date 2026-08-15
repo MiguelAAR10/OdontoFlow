@@ -9,7 +9,7 @@ from app.context import default_context
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
 from app.iam.permissions import LOCATIONS_READ
-from app.iam.service import require_permission
+from app.iam.service import provision_system_access, require_permission
 from app.organization.models import (
     Location,
     Organization,
@@ -67,10 +67,17 @@ def load_membership(
 
 
 def create_organization(session: Session, name: str) -> Organization:
-    """Create one tenant root and audit it against its own id (PF0 D7)."""
+    """Create one tenant root and audit it against its own id (PF0 D7).
+
+    The system principal is provisioned with full authority in the new
+    organization atomically (PR7), closing the runtime gap: migration-time
+    grants only cover organizations that already existed. Provisioning runs
+    inside this transaction and never commits on its own.
+    """
     organization = Organization(name=name)
     session.add(organization)
     session.flush()
+    provision_system_access(session, organization.id)
     record_event(
         session,
         organization_id=organization.id,
@@ -80,7 +87,6 @@ def create_organization(session: Session, name: str) -> Organization:
         after_state={"id": organization.id, "name": organization.name},
     )
     session.commit()
-    session.refresh(organization)
     return organization
 
 
