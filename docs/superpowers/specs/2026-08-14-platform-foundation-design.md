@@ -1007,7 +1007,7 @@ PF1 must supply an `organization_id` at every write site while **no identity exi
   weaken the assertions — it replaces them with the new authoritative attribution.
 - PF2 and PF4 require **no** changes to existing test assertions: PF2 adds no live HTTP enforcement (§21),
   and PF4 is additive for callers that send no key (I11).
-- MediStock (`../medistock`) is not touched by any block.
+- MediStock (`../../AI-EdgeRunners/medistock`) is not touched by any block.
 
 ---
 

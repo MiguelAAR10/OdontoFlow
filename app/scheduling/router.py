@@ -41,6 +41,7 @@ from app.scheduling.query import (
 from app.scheduling.schemas import (
     AppointmentCancel,
     AppointmentCreate,
+    AppointmentListItem,
     AppointmentRead,
     AppointmentReschedule,
     AvailabilityRuleCreate,
@@ -53,6 +54,8 @@ from app.scheduling.schemas import (
 from app.scheduling.service import (
     book_appointment,
     cancel_appointment,
+    get_appointment,
+    list_appointments,
     reschedule_appointment,
 )
 
@@ -88,6 +91,28 @@ def _appointment_read_from_outcome(outcome: dict) -> AppointmentRead:
         start_utc=datetime.fromisoformat(outcome["start_utc"]),
         end_utc=datetime.fromisoformat(outcome["end_utc"]),
         state=outcome["state"],
+    )
+
+
+def _appointment_list_item(appointment) -> AppointmentListItem:
+    """Agenda read DTO: the appointment plus its related display names.
+
+    Built inside the route (session still open) so the lazy relationships are
+    resolved before the response model renders.
+    """
+    return AppointmentListItem(
+        id=appointment.id,
+        lead_id=appointment.lead_id,
+        service_id=appointment.service_id,
+        practitioner_id=appointment.practitioner_id,
+        location_id=appointment.location_id,
+        start_utc=appointment.start_utc,
+        end_utc=appointment.end_utc,
+        state=appointment.state,
+        lead_name=appointment.lead.full_name,
+        service_name=appointment.service.name,
+        practitioner_name=appointment.practitioner.display_name,
+        location_name=appointment.location.name,
     )
 
 
@@ -164,6 +189,42 @@ def query_slots_route(
         payload.window_start,
         payload.window_end,
     )
+
+
+@router.get("/appointments", response_model=list[AppointmentListItem])
+def list_appointments_route(
+    request: Request,
+    db: Session = Depends(get_db),
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
+    location_id: int | None = None,
+    practitioner_id: int | None = None,
+) -> list[AppointmentListItem]:
+    """Agenda read: the acting organization's appointments, half-open window.
+
+    The window is ``[from_date, to_date)``; both bounds are optional and
+    passed as RFC 3339 instants. Location/practitioner filters narrow the
+    result; the tenant always comes from the context, never from a query
+    parameter (X3).
+    """
+    ctx = resolve_http_context(request)
+    appointments = list_appointments(
+        db,
+        ctx=ctx,
+        from_date=from_date,
+        to_date=to_date,
+        location_id=location_id,
+        practitioner_id=practitioner_id,
+    )
+    return [_appointment_list_item(a) for a in appointments]
+
+
+@router.get("/appointments/{appointment_id}", response_model=AppointmentListItem)
+def get_appointment_route(
+    appointment_id: int, request: Request, db: Session = Depends(get_db)
+) -> AppointmentListItem:
+    ctx = resolve_http_context(request)
+    return _appointment_list_item(get_appointment(db, appointment_id, ctx=ctx))
 
 
 @router.post("/appointments", response_model=AppointmentRead, status_code=201)

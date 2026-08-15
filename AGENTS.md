@@ -74,7 +74,7 @@ commit      →  ONE commit per task, implementation + tests + handoff
 - `main` must stay green: `.venv/bin/python -m pytest -q` → 0 failures before and after.
 
 **Scope guard** — do NOT touch unless the task explicitly says so:
-`app/errors.py` (error contract) · `app/db.py` (session lifecycle) · `app/scheduling/availability.py` (pure engine) · existing migrations · `../medistock` (read-only).
+`app/errors.py` (error contract) · `app/db.py` (session lifecycle) · `app/scheduling/availability.py` (pure engine) · existing migrations · `../../AI-EdgeRunners/medistock` (read-only).
 
 ---
 
@@ -132,7 +132,7 @@ commit      →  ONE commit per task, implementation + tests + handoff
 - **TDD is mandatory.** Write the failing test before the implementation.
 - **Allowed write surface only.** Each task defines which files may change; touching anything else is a defect.
 - **No commit until fan-in.** The orchestrator verifies: allowed diff, full suite green, reviewer verdict, MediStock clean — then commits.
-- **MediStock is read-only.** Never modify `../medistock`.
+- **MediStock is read-only.** Never modify `../../AI-EdgeRunners/medistock`.
 - **Never use `pkill`.** Terminate processes by exact PID only.
 - **Never run pytest while another builder/reviewer runs it** (shared test DB).
 - **Use headless `opencode run`** for OpenCode Go builders/reviewers; the OpenCode TUI is unstable inside Herdr (known Bun crash).

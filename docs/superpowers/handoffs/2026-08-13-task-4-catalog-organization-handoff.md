@@ -55,9 +55,9 @@ None. Task 2's `0001` model is used as-is.
 
 ## 11. MediStock files inspected (targeted)
 
-- `../medistock/src/clinica_backend/app/models/servicio.py`
-- `../medistock/src/clinica_backend/app/models/servicio_catalogo.py`
-- `../medistock/src/clinica_backend/app/services/catalogo_service.py`
+- `../../AI-EdgeRunners/medistock/src/clinica_backend/app/models/servicio.py`
+- `../../AI-EdgeRunners/medistock/src/clinica_backend/app/models/servicio_catalogo.py`
+- `../../AI-EdgeRunners/medistock/src/clinica_backend/app/services/catalogo_service.py`
 - (schema dir listing: `catalogo_schema.py` exists; not required further)
 
 Finance/inventory/OLAP/Streamlit/agents/routes NOT inspected.
@@ -107,7 +107,7 @@ Green in the same run: GiST overlap invariant suite (`test_booking_invariant.py`
 
 ## 17. MediStock untouched
 
-`git -C ../medistock status` clean at `ef2fffb7a348aa621f7a5b387e09a1553351000f`; only read access this task.
+`git -C ../../AI-EdgeRunners/medistock status` clean at `ef2fffb7a348aa621f7a5b387e09a1553351000f`; only read access this task.
 
 ## 18. Blockers
 

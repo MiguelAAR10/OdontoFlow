@@ -1,12 +1,16 @@
 import re
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.catalog.models import Service
 from app.commercial.models import Lead
 from app.commercial.schemas import LeadCreate
+from app.context import default_context
 from app.errors import AppError, ErrorCode
+from app.iam.context import ExecutionContext
+from app.iam.permissions import LEADS_READ
+from app.iam.service import require_permission
 from app.tenancy import resolve_organization_id, scoped
 
 ACQUISITION_SOURCES = ("promotion", "referral", "direct")
@@ -92,3 +96,40 @@ def get_lead(session: Session, lead_id: int, organization_id: int | None = None)
     if lead is None:
         raise AppError(ErrorCode.NOT_FOUND, "Lead not found.")
     return lead
+
+
+def _resolved_context(
+    ctx: ExecutionContext | None, organization_id: int | None
+) -> ExecutionContext:
+    """Explicit ctx wins; otherwise the trusted/default context (PF3 seam)."""
+    return ctx if ctx is not None else default_context(organization_id)
+
+
+def list_leads(
+    session: Session,
+    *,
+    ctx: ExecutionContext | None = None,
+    organization_id: int | None = None,
+    search: str | None = None,
+    commercial_status: str | None = None,
+) -> list[Lead]:
+    """Lead list for the CRM/booking selector, tenant-scoped.
+
+    ``search`` matches name or phone with a case-insensitive substring; the
+    tenant comes from the context, never from the request body (X3). The
+    permission check is org-wide (there is no lead location scope).
+    """
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(session, resolved, LEADS_READ)
+
+    statement = scoped(select(Lead), Lead, org_id).order_by(Lead.full_name)
+    if search:
+        like = f"%{search}%"
+        statement = statement.where(
+            or_(Lead.full_name.ilike(like), Lead.contact_phone.ilike(like))
+        )
+    if commercial_status is not None:
+        statement = statement.where(Lead.commercial_status == commercial_status)
+    return list(session.scalars(statement))

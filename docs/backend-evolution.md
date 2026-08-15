@@ -69,13 +69,13 @@ against real PostgreSQL, not re-run for this document. `pytest --collect-only` a
 ## MediStock's role
 
 Where this repository's own sources describe MediStock, they are consistent on one point: MediStock (the
-legacy Flask backend) is a **read-only behavioral reference**, kept untouched (`../medistock` in this
+legacy Flask backend) is a **read-only behavioral reference**, kept untouched (`../../AI-EdgeRunners/medistock` in this
 repository's layout), never a codebase this project edits. `AGENTS.md` states it explicitly: OdontoFlow "is
 not a 'MediStock rewrite in FastAPI'" — it is a fresh architecture (tenant model, permission model, execution
 context, transaction ownership) designed against PostgreSQL from PF0 onward, that happens to reuse proven
 *domain knowledge* (what a dental clinic's lead-to-appointment flow needs to do) from the legacy system. No
 MediStock code, schema, or endpoint was migrated table-for-table; this repository does not inspect or modify
-`../medistock`.
+`../../AI-EdgeRunners/medistock`.
 
 ## A stale specification, for the record
 

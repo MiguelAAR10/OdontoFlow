@@ -87,7 +87,7 @@ Files inspected exactly and unmodified: `data_curation_service.py`, `paciente_sc
 | `curate_consulta_payload`, `data_quality_snapshot` | **DO NOT COPY** | `data_curation_service.py:90-145`. Consult/quality reporting for the legacy patient system. |
 | Marshmallow schemas + Flask-SQLAlchemy `db.session`, legacy `.get()` dict pipeline | **DO NOT COPY** | `paciente_schema.py` (marshmallow), `data_curation_service.py:7` (`app.extensions import db`). OdontoFlow uses Pydantic v2 + SQLAlchemy 2.0 explicit `Session` (matching `app/catalog/service.py` / `app/organization/service.py` style). |
 
-No MediStock code was copied verbatim; no `../medistock` file was modified (read-only access).
+No MediStock code was copied verbatim; no `../../AI-EdgeRunners/medistock` file was modified (read-only access).
 
 ## 9. Design decisions worth recording
 

@@ -64,7 +64,7 @@
 ## 4. LECCIONES DE EJECUCIÓN (para no repetir errores)
 
 1. **El TUI de opencode crashea (Bun 1.3.14)** en paneles de Herdr → **usar modo headless**: `opencode run --model opencode-go/deepseek-v4-flash "<prompt>"` vía `herdr pane run`. El prompt va en un archivo (`$(cat /tmp/opencode/taskN-prompt.md)`).
-2. **Headless auto-rechaza directorios externos** (ej. `../medistock`) → copiar primero los archivos exactos a `/tmp/opencode/medistock-ref/` y apuntar ahí al builder (MediStock queda intacto).
+2. **Headless auto-rechaza directorios externos** (ej. `../../AI-EdgeRunners/medistock`) → copiar primero los archivos exactos a `/tmp/opencode/medistock-ref/` y apuntar ahí al builder (MediStock queda intacto).
 3. Los builders **nunca commitean**; el orquestador hace el fan-in: verificar paths permitidos, suite completa, diff de superficies compartidas vacío, MediStock limpio; luego UN commit por tarea.
 4. Un solo builder por tarea, paths permitidos explícitos; nunca dos writers en la misma migración/contrato compartido/`scheduling/service.py`.
 

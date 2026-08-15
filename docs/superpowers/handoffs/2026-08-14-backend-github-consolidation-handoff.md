@@ -84,7 +84,7 @@ touched): Flask routes, Marshmallow schemas, the Streamlit UI (`src/clinica_fron
 agent orchestration (`src/clinica_backend/app/agents/*`), the notebook runtime, and OLAP V1
 (`src/jobs/{run_olap_cycle,setup_olap}.py`, `src/sql/olap/`).
 
-`../medistock` was not modified. No file outside the ten named domain concepts and the inventory
+`../../AI-EdgeRunners/medistock` was not modified. No file outside the ten named domain concepts and the inventory
 trigger/service chain was read for this map.
 
 ## ERP future module map (summary — full detail in `product-vision.md`)
@@ -173,7 +173,7 @@ followed by Platform Foundation gap closure (item 1 above) before Clinical Bridg
 STATUS: Backend architecture documentation + GitHub consolidation complete. No production code touched.
 BACKEND_STATE: Vertical 1 CLOSED (4086dc1); PF1 CLOSED (4ff2de5); PF2 CLOSED (44ba874); PF3 CLOSED (1a737b0, scoped, 4 documented gaps); PF4 confirmed absent (no migration 0004, no CommandReceipt code). 274 tests collected at HEAD.
 DOCS: Created docs/backend-platform-blueprint.md; extended docs/product-vision.md (ERP bounded contexts, domain spine, operational-intelligence vision, integration architecture); light-edited docs/architecture.md, docs/backend-evolution.md, docs/roadmap.md, docs/README.md, README.md; created this handoff.
-MEDISTOCK_MIGRATION: 10 domain concepts classified (mostly ADAPT, one REFERENCE); detailed evidence-based Inventory finding (double-write stock bug: DB trigger + app code both mutate stock_actual, plus a ledger-bypassing manual-adjustment path); legacy surfaces (Flask routes, Marshmallow, Streamlit UI, LangGraph agents, notebooks, OLAP V1) explicitly excluded from migration. ../medistock untouched.
+MEDISTOCK_MIGRATION: 10 domain concepts classified (mostly ADAPT, one REFERENCE); detailed evidence-based Inventory finding (double-write stock bug: DB trigger + app code both mutate stock_actual, plus a ledger-bypassing manual-adjustment path); legacy surfaces (Flask routes, Marshmallow, Streamlit UI, LangGraph agents, notebooks, OLAP V1) explicitly excluded from migration. ../../AI-EdgeRunners/medistock untouched.
 ERP_MAP: 7 bounded contexts (Commercial/CRM, Scheduling implemented; Clinical, Finance, Inventory/Operations, Integrations, Intelligence/Optimization FUTURE); target domain spine documented; single-canonical-Service rule stated.
 GITHUB_HYGIENE: No secrets/credentials/.env/.audit content tracked; .gitignore sufficient, unchanged. AGENTS.md and docs/api/{openapi.yaml,json} remain untracked (pre-existing gap, re-confirmed, not fixed — maintainer decision).
 PUSH_READY: NO — fast-forward to origin/main is safe (verified via merge-base), exact command is `git push origin main`, but nothing was committed this session per instruction and a pre-existing 2-commit gap against origin/main predates this work.

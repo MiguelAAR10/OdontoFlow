@@ -90,4 +90,4 @@ Before commit:
 
 - Implementing Clinical Bridge, inventory, consumables, sales, finance, or external adapters.
 - Changing authentication, authorization behavior, database schema, or API behavior.
-- Editing `../medistock`.
+- Editing `../../AI-EdgeRunners/medistock`.

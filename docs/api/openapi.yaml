@@ -54,15 +54,51 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /leads:
+    get:
+      summary: List Leads Route
+      operationId: list_leads_route_leads_get
+      parameters:
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: commercial_status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Commercial Status
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LeadRead'
+                title: Response List Leads Route Leads Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     post:
       summary: Create Lead Route
       operationId: create_lead_route_leads_post
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/LeadCreate'
-        required: true
       responses:
         '201':
           description: Successful Response
@@ -101,6 +137,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /locations:
+    get:
+      summary: List Locations Route
+      operationId: list_locations_route_locations_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/LocationRead'
+                type: array
+                title: Response List Locations Route Locations Get
     post:
       summary: Create Location Route
       operationId: create_location_route_locations_post
@@ -276,15 +325,80 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /appointments:
+    get:
+      summary: List Appointments Route
+      description: 'Agenda read: the acting organization''s appointments, half-open
+        window.
+
+
+        The window is ``[from_date, to_date)``; both bounds are optional and
+
+        passed as RFC 3339 instants. Location/practitioner filters narrow the
+
+        result; the tenant always comes from the context, never from a query
+
+        parameter (X3).'
+      operationId: list_appointments_route_appointments_get
+      parameters:
+      - name: from_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: From Date
+      - name: to_date
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: To Date
+      - name: location_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Location Id
+      - name: practitioner_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Practitioner Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AppointmentListItem'
+                title: Response List Appointments Route Appointments Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     post:
       summary: Create Appointment Route
       operationId: create_appointment_route_appointments_post
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/AppointmentCreate'
-        required: true
       responses:
         '201':
           description: Successful Response
@@ -292,6 +406,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AppointmentRead'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /appointments/{appointment_id}:
+    get:
+      summary: Get Appointment Route
+      operationId: get_appointment_route_appointments__appointment_id__get
+      parameters:
+      - name: appointment_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Appointment Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppointmentListItem'
         '422':
           description: Validation Error
           content:
@@ -400,6 +538,67 @@ components:
       - practitioner_id
       - start
       title: AppointmentCreate
+    AppointmentListItem:
+      properties:
+        id:
+          type: integer
+          title: Id
+        lead_id:
+          type: integer
+          title: Lead Id
+        service_id:
+          type: integer
+          title: Service Id
+        practitioner_id:
+          type: integer
+          title: Practitioner Id
+        location_id:
+          type: integer
+          title: Location Id
+        start_utc:
+          type: string
+          format: date-time
+          title: Start Utc
+        end_utc:
+          type: string
+          format: date-time
+          title: End Utc
+        state:
+          type: string
+          title: State
+        lead_name:
+          type: string
+          title: Lead Name
+        service_name:
+          type: string
+          title: Service Name
+        practitioner_name:
+          type: string
+          title: Practitioner Name
+        location_name:
+          type: string
+          title: Location Name
+      type: object
+      required:
+      - id
+      - lead_id
+      - service_id
+      - practitioner_id
+      - location_id
+      - start_utc
+      - end_utc
+      - state
+      - lead_name
+      - service_name
+      - practitioner_name
+      - location_name
+      title: AppointmentListItem
+      description: 'Agenda read DTO: the appointment plus the names the agenda renders.
+
+
+        The names are joined at the application boundary (relationships), so the
+
+        frontend never needs per-row lookups and never sees raw mockData shapes.'
     AppointmentRead:
       properties:
         id:

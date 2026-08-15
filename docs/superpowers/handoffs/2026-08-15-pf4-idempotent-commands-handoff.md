@@ -94,7 +94,7 @@ no sleeps, no Redis, no middleware, no async.
 ## Forbidden surfaces (untouched)
 
 `app/db.py` · `app/scheduling/availability.py` · `app/iam/*` · `app/audit/*` ·
-existing migrations · `../medistock`. The practitioner-global GiST exclusion
+existing migrations · `../../AI-EdgeRunners/medistock`. The practitioner-global GiST exclusion
 and the `23P01`/`40P01` behaviour are unchanged (C5/C7/C8 tests).
 
 ## Changed / new files

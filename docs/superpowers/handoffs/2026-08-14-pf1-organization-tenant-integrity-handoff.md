@@ -60,7 +60,7 @@ Delivered:
 
 `app/errors.py` (error contract), `app/db.py`, `app/scheduling/availability.py` (pure engine), `app/__init__.py`
 (router wiring), **every router**, **every Pydantic schema**, `alembic/versions/0001_*.py`, `alembic/env.py`,
-the PF0 spec, `../medistock`.
+the PF0 spec, `../../AI-EdgeRunners/medistock`.
 
 ### Tests adapted (fixtures only — see §8)
 

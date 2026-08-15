@@ -16,3 +16,15 @@
   422); humans keep the previous contract; absent key writes no receipt.
 - The practitioner-global GiST exclusion and the existing `23P01`/`40P01`
   behaviour are unchanged.
+
+## Accelerated Core Sprint — Agenda Integration (2026-08-15)
+
+- Added agenda read endpoints: `GET /appointments` (half-open date window,
+  location/practitioner filters, joined display names), `GET /appointments/{id}`,
+  `GET /leads` (search), `GET /locations` — all org-scoped and permission-checked
+  (`appointments.read`, `leads.read`, `locations.read`), OpenAPI regenerated.
+- Frontend (separate repo) wired the Agenda to these endpoints with
+  OpenAPI-generated types and `Idempotency-Key` on booking/reschedule/cancel;
+  E2E proven against real FastAPI + PostgreSQL with no mock data.
+- Mechanical path fix: `../medistock` → `../../AI-EdgeRunners/medistock` in
+  engineering docs after the workspace reorganisation.

@@ -87,3 +87,16 @@ class AppointmentRead(BaseModel):
     start_utc: datetime
     end_utc: datetime
     state: str
+
+
+class AppointmentListItem(AppointmentRead):
+    """Agenda read DTO: the appointment plus the names the agenda renders.
+
+    The names are joined at the application boundary (relationships), so the
+    frontend never needs per-row lookups and never sees raw mockData shapes.
+    """
+
+    lead_name: str
+    service_name: str
+    practitioner_name: str
+    location_name: str

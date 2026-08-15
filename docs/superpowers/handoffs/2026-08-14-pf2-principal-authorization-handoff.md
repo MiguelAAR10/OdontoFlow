@@ -242,7 +242,7 @@ Real PostgreSQL throughout, no mocks. Database proofs write raw SQL; evaluation 
 
 `app/errors.py`, `app/db.py`, `app/tenancy.py`, `app/scheduling/availability.py`,
 `alembic/versions/0001_*.py`, `alembic/versions/0002_*.py`, every existing domain service, schema and
-router, `app/__init__.py`, the PF0 spec, `../medistock`. **No existing test assertion was weakened or
+router, `app/__init__.py`, the PF0 spec, `../../AI-EdgeRunners/medistock`. **No existing test assertion was weakened or
 deleted**, and no request/response schema or OpenAPI path changed.
 
 ---

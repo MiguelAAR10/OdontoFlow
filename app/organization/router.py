@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
+from app.context import resolve_http_context
 from app.db import get_db
 from app.organization.schemas import (
     CapabilityCreate,
@@ -15,9 +16,18 @@ from app.organization.service import (
     create_location,
     create_practitioner,
     list_eligible_practitioners,
+    list_locations,
 )
 
 router = APIRouter()
+
+
+@router.get("/locations", response_model=list[LocationRead])
+def list_locations_route(
+    request: Request, db: Session = Depends(get_db)
+) -> list[LocationRead]:
+    ctx = resolve_http_context(request)
+    return list_locations(db, ctx=ctx)
 
 
 @router.post("/locations", response_model=LocationRead, status_code=201)

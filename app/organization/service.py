@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session
 
 from app.audit.service import record_event
 from app.catalog.models import Service
+from app.context import default_context
 from app.errors import AppError, ErrorCode
+from app.iam.context import ExecutionContext
+from app.iam.permissions import LOCATIONS_READ
+from app.iam.service import require_permission
 from app.organization.models import (
     Location,
     Organization,
@@ -78,6 +82,35 @@ def create_organization(session: Session, name: str) -> Organization:
     session.commit()
     session.refresh(organization)
     return organization
+
+
+def _resolved_context(
+    ctx: ExecutionContext | None, organization_id: int | None
+) -> ExecutionContext:
+    """Explicit ctx wins; otherwise the trusted/default context (PF3 seam)."""
+    return ctx if ctx is not None else default_context(organization_id)
+
+
+def list_locations(
+    session: Session,
+    *,
+    ctx: ExecutionContext | None = None,
+    organization_id: int | None = None,
+) -> list[Location]:
+    """The acting organization's locations (branch selector for the agenda).
+
+    Tenant-scoped by construction; the permission check is org-wide (branches
+    have no narrower scope than the organization itself).
+    """
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(session, resolved, LOCATIONS_READ)
+    return list(
+        session.scalars(
+            scoped(select(Location), Location, org_id).order_by(Location.name)
+        )
+    )
 
 
 def create_location(

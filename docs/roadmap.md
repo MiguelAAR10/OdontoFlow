@@ -17,22 +17,28 @@ that order and what each NEXT/LATER item actually depends on.
 - **Provenance** (PF3) — explicit `ExecutionContext`, wired into booking/cancellation/rescheduling; audit
   rows carry organization, principal, principal type, request id, and correlation id. Closed at `1a737b0`.
   Scoped to those three endpoints only — see `architecture.md` §9.
+- **Idempotent Commands** (PF4) — durable PostgreSQL `CommandReceipt`, exactly-once semantics for booking,
+  cancellation, and rescheduling, no Redis, no middleware transaction ownership. Closed at `34cfbf7`.
+- **Frontend integration reads** (Accelerated Core Sprint) — `GET /appointments` (date/location/practitioner
+  filters, half-open window), `GET /appointments/{id}`, `GET /leads` (search), `GET /locations`; all
+  tenant-scoped, permission-checked, OpenAPI-regenerated; agenda E2E proven against real FastAPI +
+  PostgreSQL with the frontend's real adapter (no mocks). Closed at the Accelerated Core Sprint commit.
 
 ## NOW
 
-- **PF4 — Idempotent Commands.** Durable PostgreSQL `CommandReceipt`, exactly-once semantics for booking,
-  cancellation, and rescheduling, no Redis, no middleware transaction ownership. Designed in
-  `docs/superpowers/specs/2026-08-14-platform-foundation-design.md` §21; not started in code.
+- **Agenda ↔ Scheduling vertical** (frontend) — shipped read endpoints consumed by the real frontend adapter
+  (booking/reschedule/cancel with `Idempotency-Key`); remaining screens (Pacientes→Leads, Caja, Inventario,
+  Chat, Agente) stay MOCK/PROTOTYPE until their domain authority exists.
 
 ## NEXT
 
 - **Platform Foundation closure.** Close the gaps recorded in `architecture.md` §9 before building further:
   wire `provision_system_access` into `create_organization`; extend `ExecutionContext`/permission enforcement
-  beyond the three scheduling endpoints; resolve BLOCKER-2 (whether a location-scoped principal can create a
+  beyond the scheduling endpoints; resolve BLOCKER-2 (whether a location-scoped principal can create a
   `Lead`, given `Lead` has no `location_id` today).
-- **Clinical Bridge.** `Appointment → Patient → Visit → ServiceExecution` — the first entity a future
-  Finance or Inventory vertical can safely reference, replacing the pre-clinical `Lead` once a real patient
-  relationship exists.
+- **Clinical Bridge.** `Appointment → Patient → Visit → ServiceExecution` — proposal synthesized from legacy
+  evidence in `docs/superpowers/handoffs/2026-08-15-accelerated-core-sprint-handoff.md`; the first entity a
+  future Finance or Inventory vertical can safely reference.
 
 ## LATER
 

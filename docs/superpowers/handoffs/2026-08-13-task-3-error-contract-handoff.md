@@ -72,7 +72,7 @@ Never exposed: SQL, constraint names, SQLSTATE values, stack traces, database in
 ## Confirmation
 
 - Task 2 invariants still pass: all prior 15 tests green (migrations, constraints, GiST overlap rejection, health).
-- MediStock untouched: `git -C ../medistock status` clean at `ef2fffb7a348aa621f7a5b387e09a1553351000f`.
+- MediStock untouched: `git -C ../../AI-EdgeRunners/medistock status` clean at `ef2fffb7a348aa621f7a5b387e09a1553351000f`.
 
 ## Decisions
 

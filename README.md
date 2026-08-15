@@ -9,8 +9,10 @@ appointment** through typed FastAPI contracts, transactional booking with databa
 and an audit trail that records who did what and why — so that humans, agents, and integrations can operate
 the same domain layer under the same rules.
 
-> **Status:** Vertical 1 (Lead-to-Appointment) **CLOSED** · Platform Foundation (PF1–PF3) **implemented, with
-> known gaps** · PF4 (Idempotent Commands) **next**. See [`docs/roadmap.md`](docs/roadmap.md).
+> **Status:** Vertical 1 (Lead-to-Appointment) **CLOSED** · Platform Foundation **PF1–PF4 CLOSED**
+> (tenant integrity, authorization, execution context/audit, idempotent commands) · Frontend integration
+> **contract defined, first vertical pending**. See [`docs/roadmap.md`](docs/roadmap.md) and
+> [`docs/integration/`](docs/integration/).
 
 ---
 
@@ -48,10 +50,14 @@ Caller (HTTP today; future agent tool)
 
 - **Vertical 1 — Lead to Appointment: CLOSED.** Full commercial-to-booking journey, proven end-to-end over
   HTTP against real PostgreSQL.
-- **Platform Foundation PF1–PF3: CLOSED**, meaning tenant integrity, permission-based IAM, and execution
-  provenance exist and are tested — but PF3 wiring is scoped to three endpoints and authentication does not
-  exist yet. Read [`docs/architecture.md`](docs/architecture.md) §9 before assuming more than that.
-- **PF4 — Idempotent Commands: designed, not implemented.** This is the current unit of work.
+- **Platform Foundation PF1–PF4: CLOSED.** Tenant integrity (composite FKs), permission-based IAM,
+  execution provenance, and durable command idempotency (`command_receipts`, no Redis) exist and are
+  tested (294 tests). Authentication does not exist yet — identity today is the trusted default
+  (`system` principal, bootstrap org) per PF3; read [`docs/architecture.md`](docs/architecture.md) §9
+  before assuming more.
+- **Frontend integration: contract defined.** The OdontoSmart frontend (sibling repository) was inspected
+  read-only; the evidence-backed integration contract, the action→endpoint matrix and the first vertical
+  (Agenda ↔ Scheduling) live in [`docs/integration/`](docs/integration/). No integration code is merged yet.
 
 ## Tech stack
 
@@ -60,11 +66,12 @@ Caller (HTTP today; future agent tool)
 | API | FastAPI (sync routes, Pydantic v2, auto OpenAPI at `/openapi.json`) |
 | ORM | SQLAlchemy 2.0 (declarative, typed `Mapped[...]`) |
 | DB | PostgreSQL 15 (`btree_gist`, JSONB, partial GiST exclusion) |
-| Migrations | Alembic (`0001` → `0002` → `0003`) |
+| Migrations | Alembic (`0001` → `0002` → `0003` → `0004`) |
 | Tests | pytest + real PostgreSQL (`odontoflow_test`) |
 | Runtime | Docker Compose (Postgres), Python 3.12 |
 
-No Redis. No Kafka. No async migration. No LLM libraries. No frontend yet.
+No Redis. No Kafka. No async migration. No LLM libraries. The frontend lives in a sibling repository
+(`../odontosmart-frontend`); this repo is the domain authority and ships no UI code.
 
 ---
 
@@ -86,12 +93,14 @@ app/
                          # availability.py (pure slot engine), query.py, service.py
   iam/                   # Principal, Membership, Role, Permission, RoleAssignment,
                          # context.py (ExecutionContext), permissions.py, service.py
-alembic/versions/        # 0001 vertical · 0002 org/tenant · 0003 iam
+  idempotency/           # CommandReceipt + run_idempotent_command (PF4)
+alembic/versions/        # 0001 vertical · 0002 org/tenant · 0003 iam · 0004 command_receipts
 docs/superpowers/
   specs/                 # approved design specs (Vertical 1, Platform Foundation)
   evidence/              # platform readiness audits
-  handoffs/              # per-task reports (Tasks 1-10, PF1-PF3)
-tests/                   # 274 tests: unit + integration against real PostgreSQL
+  handoffs/              # per-task reports (Tasks 1-10, PF1-PF4)
+docs/integration/        # frontend ↔ backend contract, matrix, data flows, first vertical
+tests/                   # 294 tests: unit + integration against real PostgreSQL
 ```
 
 ---
@@ -135,21 +144,22 @@ cp .env.example .env   # adjust DATABASE_URL if needed
 
 ```bash
 # Full suite (real PostgreSQL — no SQLite, no mocks for DB invariants)
-.venv/bin/python -m pytest -q        # 274 tests
+.venv/bin/python -m pytest -q        # 294 tests
 
 # Focused
-.venv/bin/python -m pytest tests/test_booking_invariant.py tests/test_tenant_integrity.py -q
+.venv/bin/python -m pytest tests/test_idempotency.py tests/test_booking_invariant.py -q
 ```
 
-The suite covers: migrations upgrade/downgrade cycles, GiST overlap rejection with real races (two sessions + threads + `Barrier`, no sleeps), tenant-integrity proofs (cross-org states rejected by the DB), authorization (org-wide vs location scopes, inactive memberships), execution-context provenance, and a full HTTP E2E journey (lead → catalog → organization → availability → slot → book → reschedule → cancel) with audit verification.
+The suite covers: migrations upgrade/downgrade cycles, GiST overlap rejection with real races (two sessions + threads + `Barrier`, no sleeps), tenant-integrity proofs (cross-org states rejected by the DB), authorization (org-wide vs location scopes, inactive memberships), execution-context provenance, PF4 idempotency (exactly-once, replay, fingerprint mismatch, rollback, concurrency), and a full HTTP E2E journey (lead → catalog → organization → availability → slot → book → reschedule → cancel) with audit verification.
 
 ---
 
 ## Roadmap
 
 - **DONE** — Lead → Appointment (Vertical 1, closed); multi-tenant foundation (PF1); authorization (PF2);
-  execution provenance (PF3).
-- **NOW** — PF4, Idempotent Commands (PostgreSQL-durable `CommandReceipt`, no Redis).
+  execution provenance (PF3); idempotent commands (PF4).
+- **NOW** — Frontend integration, first vertical **Agenda ↔ Scheduling** (read endpoints + frontend adapter;
+  contract in [`docs/integration/frontend-backend-contract.md`](docs/integration/frontend-backend-contract.md)).
 - **NEXT** — Platform Foundation gap closure; Clinical Bridge (`Appointment → Patient → Visit → ServiceExecution`).
 - **LATER** — Finance, Inventory/Operations, external adapters, operational optimization, agent execution.
 
@@ -170,10 +180,14 @@ handoffs — append-only, one authoritative snapshot per file).
 | [`docs/backend-platform-blueprint.md`](docs/backend-platform-blueprint.md) | Detailed technical authority: principles + why, full vertical lifecycle, PF1–PF4 rationale, MediStock migration map |
 | [`docs/backend-evolution.md`](docs/backend-evolution.md) | How did the backend get here, commit by commit? |
 | [`docs/roadmap.md`](docs/roadmap.md) | DONE / NOW / NEXT / LATER |
+| [`docs/integration/frontend-current-state.md`](docs/integration/frontend-current-state.md) | Current state of the OdontoSmart frontend (read-only inspection) |
+| [`docs/integration/frontend-backend-contract.md`](docs/integration/frontend-backend-contract.md) | Action→endpoint matrix + first vertical definition (Agenda ↔ Scheduling) |
+| [`docs/integration/module-integration-map.md`](docs/integration/module-integration-map.md) | Frontend module → backend module mapping |
+| [`docs/integration/data-flow.md`](docs/integration/data-flow.md) | Read/booking/idempotency/error flows across the boundary |
 | `docs/superpowers/specs/2026-08-12-lead-to-appointment-design.md` | Approved Vertical 1 design |
 | `docs/superpowers/specs/2026-08-14-platform-foundation-design.md` | Approved PF0 platform design (tenant model, IAM, context, idempotency, PF1–PF4) |
 | `docs/superpowers/evidence/*` | Platform readiness audits (data ownership, actors/commands) |
-| `docs/superpowers/handoffs/*` | Per-task evidence reports (Tasks 1–10, PF1–PF3) |
+| `docs/superpowers/handoffs/*` | Per-task evidence reports (Tasks 1–10, PF1–PF4) |
 
 ---
 

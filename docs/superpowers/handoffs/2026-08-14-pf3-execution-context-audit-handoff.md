@@ -70,7 +70,7 @@ Full suite: **274 passed** (258 prior + 16 new).
 - `app/scheduling/router.py` — `resolve_http_context` wiring + `X-Correlation-Id` passthrough;
 - `tests/test_execution_context.py` (NEW) + adaptations in `test_booking.py`, `test_cancellation.py`, `test_rescheduling.py`.
 
-Forbidden surfaces untouched: `app/errors.py`, `app/db.py`, `app/scheduling/availability.py`, `app/iam/models.py`, migrations, `../medistock`.
+Forbidden surfaces untouched: `app/errors.py`, `app/db.py`, `app/scheduling/availability.py`, `app/iam/models.py`, migrations, `../../AI-EdgeRunners/medistock`.
 
 ## Blockers / risks
 

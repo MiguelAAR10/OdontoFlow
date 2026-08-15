@@ -47,6 +47,7 @@ from app.idempotency.service import IdempotencyClaim
 from app.iam.permissions import (
     APPOINTMENTS_CANCEL,
     APPOINTMENTS_CREATE,
+    APPOINTMENTS_READ,
     APPOINTMENTS_RESCHEDULE,
 )
 from app.iam.service import require_permission
@@ -248,6 +249,79 @@ def _settle_receipt(
     receipt.resource_type = resource_type
     receipt.resource_id = resource_id
     receipt.outcome_json = outcome_json
+
+
+def list_appointments(
+    session: Session,
+    *,
+    ctx: ExecutionContext | None = None,
+    organization_id: int | None = None,
+    from_date: datetime | None = None,
+    to_date: datetime | None = None,
+    location_id: int | None = None,
+    practitioner_id: int | None = None,
+) -> list[Appointment]:
+    """Agenda read: every appointment of the acting organization, filtered.
+
+    Tenant scoping is part of the query (§7.4): another organization's
+    appointments never leave the database. The window is half-open
+    ``[from_date, to_date)`` so the agenda can pass the week's start and the
+    day after the last visible day. A ``location_id`` filter doubles as the
+    location scope for the permission check (E4/E5): an org-wide grant passes,
+    a location-scoped grant passes only for that location. Cancelled rows are
+    returned with their ``state`` so the agenda decides what to show.
+    """
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(session, resolved, APPOINTMENTS_READ, location_id=location_id)
+
+    statement = scoped(select(Appointment), Appointment, org_id).order_by(
+        Appointment.start_utc
+    )
+    if from_date is not None:
+        statement = statement.where(Appointment.start_utc >= from_date)
+    if to_date is not None:
+        statement = statement.where(Appointment.start_utc < to_date)
+    if location_id is not None:
+        statement = statement.where(Appointment.location_id == location_id)
+    if practitioner_id is not None:
+        statement = statement.where(Appointment.practitioner_id == practitioner_id)
+    return list(session.scalars(statement))
+
+
+def get_appointment(
+    session: Session,
+    appointment_id: int,
+    *,
+    ctx: ExecutionContext | None = None,
+    organization_id: int | None = None,
+) -> Appointment:
+    """One appointment by id, tenant-scoped.
+
+    The tenant filter is part of the query, so another organization's
+    appointment is ``NOT_FOUND`` exactly like a non-existent id (E8). The
+    permission check runs against the appointment's own location (F-4).
+    """
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    appointment = session.scalar(
+        scoped(
+            select(Appointment).where(Appointment.id == appointment_id),
+            Appointment,
+            org_id,
+        )
+    )
+    if appointment is None:
+        raise AppError(ErrorCode.NOT_FOUND, "Appointment not found.")
+    if ctx is not None:
+        require_permission(
+            session,
+            resolved,
+            APPOINTMENTS_READ,
+            location_id=appointment.location_id,
+        )
+    return appointment
 
 
 def _appointment_outcome(appointment: Appointment, *, status: str = "applied") -> dict:
