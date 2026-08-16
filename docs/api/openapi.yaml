@@ -682,6 +682,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /products/{product_id}/transfers:
+    post:
+      summary: Register Transfer Route
+      operationId: register_transfer_route_products__product_id__transfers_post
+      parameters:
+      - name: product_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Product Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferRead'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /products/{product_id}/movements:
     get:
       summary: List Movements Route
@@ -693,6 +723,14 @@ paths:
         schema:
           type: integer
           title: Product Id
+      - name: location_id
+        in: query
+        required: true
+        schema:
+          type: integer
+          description: The location whose kardex is read.
+          title: Location Id
+        description: The location whose kardex is read.
       responses:
         '200':
           description: Successful Response
@@ -721,6 +759,14 @@ paths:
         schema:
           type: integer
           title: Product Id
+      - name: location_id
+        in: query
+        required: true
+        schema:
+          type: integer
+          description: The location whose balance is read.
+          title: Location Id
+        description: The location whose balance is read.
       responses:
         '200':
           description: Successful Response
@@ -1100,6 +1146,10 @@ components:
   schemas:
     AdjustmentCreate:
       properties:
+        location_id:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Location Id
         quantity:
           anyOf:
           - type: number
@@ -1114,11 +1164,11 @@ components:
       additionalProperties: false
       type: object
       required:
+      - location_id
       - quantity
       - reason
       title: AdjustmentCreate
-      description: A reason-required correction (every stock change is a movement
-        row).
+      description: A reason-required correction at one location (a movement row, always).
     AppointmentCancel:
       properties: {}
       additionalProperties: false
@@ -1333,6 +1383,9 @@ components:
         product_id:
           type: integer
           title: Product Id
+        location_id:
+          type: integer
+          title: Location Id
         available:
           type: string
           pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
@@ -1340,6 +1393,7 @@ components:
       type: object
       required:
       - product_id
+      - location_id
       - available
       title: BalanceRead
     CapabilityCreate:
@@ -1436,6 +1490,10 @@ components:
       title: ChargeRead
     EntryCreate:
       properties:
+        location_id:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Location Id
         quantity:
           anyOf:
           - type: number
@@ -1454,9 +1512,10 @@ components:
       additionalProperties: false
       type: object
       required:
+      - location_id
       - quantity
       title: EntryCreate
-      description: A purchase/initial stock input (legacy SP adapted to HTTP).
+      description: A purchase/initial stock input, targeted at one location.
     HTTPValidationError:
       properties:
         detail:
@@ -1585,6 +1644,9 @@ components:
         product_id:
           type: integer
           title: Product Id
+        location_id:
+          type: integer
+          title: Location Id
         type:
           type: string
           title: Type
@@ -1608,6 +1670,11 @@ components:
           - type: integer
           - type: 'null'
           title: Id Consumo Origen
+        transfer_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Transfer Id
         moved_at:
           type: string
           format: date-time
@@ -1616,11 +1683,13 @@ components:
       required:
       - id
       - product_id
+      - location_id
       - type
       - quantity
       - unit_price
       - reason
       - id_consumo_origen
+      - transfer_id
       - moved_at
       title: MovementRead
     PatientCreate:
@@ -2078,6 +2147,77 @@ components:
       - start
       - end
       title: SlotResult
+    TransferCreate:
+      properties:
+        origin_location_id:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Origin Location Id
+        destination_location_id:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Destination Location Id
+        quantity:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+          - type: string
+            pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Quantity
+        reason:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Reason
+      additionalProperties: false
+      type: object
+      required:
+      - origin_location_id
+      - destination_location_id
+      - quantity
+      title: TransferCreate
+      description: Move stock between two locations of the same organization.
+    TransferRead:
+      properties:
+        transfer_id:
+          type: string
+          title: Transfer Id
+        product_id:
+          type: integer
+          title: Product Id
+        origin_location_id:
+          type: integer
+          title: Origin Location Id
+        destination_location_id:
+          type: integer
+          title: Destination Location Id
+        quantity:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Quantity
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+        out_movement_id:
+          type: integer
+          title: Out Movement Id
+        in_movement_id:
+          type: integer
+          title: In Movement Id
+      type: object
+      required:
+      - transfer_id
+      - product_id
+      - origin_location_id
+      - destination_location_id
+      - quantity
+      - reason
+      - out_movement_id
+      - in_movement_id
+      title: TransferRead
     ValidationError:
       properties:
         loc:

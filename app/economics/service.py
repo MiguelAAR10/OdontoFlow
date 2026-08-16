@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_event
-from app.clinical.models import ServiceExecution
+from app.clinical.models import ServiceExecution, Visit
 from app.context import default_context
 from app.economics.models import Charge, Payment, Product, ServiceConsumption
 from app.economics.schemas import (
@@ -80,6 +80,22 @@ def _load_execution(
     if execution is None:
         raise AppError(ErrorCode.NOT_FOUND, "ServiceExecution not found.")
     return execution
+
+
+def _load_execution_visit(
+    session: Session, execution: ServiceExecution, organization_id: int
+) -> Visit:
+    """The visit that realized the execution — the stock-out location (M4.2).
+
+    The execution's composite FK pins the visit to the same organization, so
+    the returned location can never belong to another tenant.
+    """
+    visit = session.scalar(
+        scoped(select(Visit).where(Visit.id == execution.visit_id), Visit, organization_id)
+    )
+    if visit is None:
+        raise AppError(ErrorCode.NOT_FOUND, "Visit not found.")
+    return visit
 
 
 def _load_active_product(
@@ -252,7 +268,7 @@ def create_service_consumption(
         if ctx is not None:
             require_permission(session, resolved, CONSUMPTIONS_CREATE)
 
-        _load_execution(session, execution_id, org_id)
+        execution = _load_execution(session, execution_id, org_id)
         _load_active_product(session, data.product_id, org_id)
         if data.quantity <= 0:
             raise AppError(ErrorCode.INVALID_INPUT, "quantity must be positive.")
@@ -272,10 +288,16 @@ def create_service_consumption(
                 "The product is already consumed in this execution.",
             )
 
-        # Inventory (PF7): the stock floor is the ledger sum; the SALIDA
-        # movement lands atomically with the consumption row (1:1 via
-        # id_consumo_origen UNIQUE).
-        require_stock(session, data.product_id, org_id, data.quantity)
+        # Inventory (PF7 + M4.2): the stock floor is the ledger sum of the
+        # location where the service was actually performed (the execution's
+        # visit location — never client-supplied); the SALIDA movement lands
+        # atomically with the consumption row (1:1 via id_consumo_origen
+        # UNIQUE) anchored to that same location.
+        visit = _load_execution_visit(session, execution, org_id)
+        stock_location_id = visit.location_id
+        require_stock(
+            session, data.product_id, org_id, data.quantity, stock_location_id
+        )
 
         consumption = ServiceConsumption(
             organization_id=org_id,
@@ -300,6 +322,7 @@ def create_service_consumption(
             InventoryMovement(
                 organization_id=org_id,
                 product_id=data.product_id,
+                location_id=stock_location_id,
                 type=SALIDA,
                 quantity=data.quantity,
                 unit_price=data.unit_price,
@@ -318,6 +341,7 @@ def create_service_consumption(
                 "id": consumption.id,
                 "service_execution_id": consumption.service_execution_id,
                 "product_id": consumption.product_id,
+                "location_id": stock_location_id,
                 "quantity": str(consumption.quantity),
                 "unit_price": str(consumption.unit_price),
             },
@@ -332,6 +356,7 @@ def create_service_consumption(
                 "resource_id": str(consumption.id),
                 "service_execution_id": consumption.service_execution_id,
                 "product_id": consumption.product_id,
+                "location_id": stock_location_id,
                 "product_name": consumption.product.name,
                 "quantity": str(consumption.quantity),
                 "unit_price": str(consumption.unit_price),

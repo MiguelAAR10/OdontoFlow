@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -43,7 +44,7 @@ EXPECTED_TABLES = {
     "audit_events",
 }
 
-HEAD_REVISION = "0007"
+HEAD_REVISION = "0008"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (
@@ -359,3 +360,227 @@ def test_downgrade_and_reupgrade_preserve_existing_rows(legacy_database):
         assert conn.execute(
             text("SELECT count(*) FROM practitioner_memberships")
         ).scalar() == 1
+
+
+# --- M4.2: migration 0008 (location-aware inventory) -------------------------
+
+
+INVENTORY_LEDGER_ROWS = (
+    "INSERT INTO locations (organization_id, name, timezone)"
+    " VALUES (1, 'Sede Uno', 'America/Lima')",
+    "INSERT INTO locations (organization_id, name, timezone)"
+    " VALUES (1, 'Sede Dos', 'America/Lima')",
+    "INSERT INTO services (organization_id, name, duration_minutes)"
+    " VALUES (1, 'Limpieza', 30)",
+    "INSERT INTO practitioners (display_name) VALUES ('Dra. Ana')",
+    "INSERT INTO practitioner_memberships (organization_id, practitioner_id, is_active)"
+    " VALUES (1, 1, true)",
+    "INSERT INTO patients (organization_id, full_name, dni, sexo)"
+    " VALUES (1, 'Paciente Uno', '12345678', 'M')",
+    "INSERT INTO visits (organization_id, patient_id, practitioner_id, location_id)"
+    " VALUES (1, 1, 1, 1)",
+    "INSERT INTO service_executions (organization_id, visit_id, service_id, executed_price)"
+    " VALUES (1, 1, 1, 150.00)",
+    "INSERT INTO products (organization_id, name, unit, kind)"
+    " VALUES (1, 'Anestesia', 'ampolla', 'consumible')",
+    "INSERT INTO service_consumptions"
+    " (organization_id, service_execution_id, product_id, quantity, unit_price)"
+    " VALUES (1, 1, 1, 2.00, 25.00)",
+    # The SALIDA is causally linked to the consumption (1:1, 0007 contract).
+    "INSERT INTO inventory_movements (organization_id, product_id, type, quantity, id_consumo_origen)"
+    " VALUES (1, 1, 'SALIDA', 2.00, 1)",
+)
+
+
+@pytest.fixture
+def inventory_ledger_database(extra_movements=()):
+    """A throwaway database at revision ``0007`` holding a consumption chain.
+
+    The SALIDA row is the only pre-existing movement by default; ``extra_movements``
+    adds org-level rows with no consumption origin (the rows a location backfill
+    must never fabricate a location for).
+    """
+    url = _temporary_database_url()
+    name = url.rsplit("/", 1)[-1]
+    server = create_engine(
+        make_url(TEST_DATABASE_URL).set(database="odontoflow").render_as_string(hide_password=False),
+        isolation_level="AUTOCOMMIT",
+    )
+    with server.connect() as conn:
+        conn.execute(text(f"CREATE DATABASE {name}"))
+
+    command.upgrade(_alembic_config(url), "0007")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        for statement in INVENTORY_LEDGER_ROWS + tuple(extra_movements):
+            conn.execute(text(statement))
+    try:
+        yield url, engine
+    finally:
+        engine.dispose()
+        with server.connect() as conn:
+            conn.execute(text(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)"))
+        server.dispose()
+
+
+def test_upgrade_0008_backfills_consumption_linked_rows_into_their_visit_location(
+    inventory_ledger_database,
+):
+    url, engine = inventory_ledger_database
+
+    command.upgrade(_alembic_config(url), HEAD_REVISION)
+
+    with engine.connect() as conn:
+        assert conn.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar() == HEAD_REVISION
+        # The SALIDA's location is derived truthfully from its consumption's
+        # visit — never guessed.
+        rows = conn.execute(
+            text(
+                "SELECT location_id, type, id_consumo_origen"
+                " FROM inventory_movements ORDER BY id"
+            )
+        ).all()
+        assert rows == [(1, "SALIDA", 1)]
+        nullable = conn.execute(
+            text(
+                "SELECT count(*) FROM information_schema.columns"
+                " WHERE table_schema = 'public' AND table_name = 'inventory_movements'"
+                " AND column_name = 'location_id' AND is_nullable = 'YES'"
+            )
+        ).scalar()
+        assert nullable == 0
+        # The composite FK into locations(organization_id, id) exists.
+        fk = conn.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                " WHERE conname = 'fk_inventory_movements_organization_location'"
+            )
+        ).scalar()
+        assert fk == (
+            "FOREIGN KEY (organization_id, location_id)"
+            " REFERENCES locations(organization_id, id) ON DELETE RESTRICT"
+        )
+
+
+def test_upgrade_0008_refuses_to_fabricate_org_level_locations(
+    inventory_ledger_database,
+):
+    url, engine = inventory_ledger_database
+    config = _alembic_config(url)
+    # An org-level ENTRADA has no consumption origin: no truthful location.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO inventory_movements (organization_id, product_id, type, quantity)"
+                " VALUES (1, 1, 'ENTRADA', 10.00)"
+            )
+        )
+
+    with pytest.raises(Exception) as exc:
+        command.upgrade(config, HEAD_REVISION)
+    assert "refuses to fabricate" in str(exc.value).lower()
+
+    # The failed upgrade is atomic: still at 0007, nothing altered.
+    with engine.connect() as conn:
+        assert conn.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar() == "0007"
+        columns = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = 'public' AND table_name = 'inventory_movements'"
+                )
+            )
+        }
+        assert "location_id" not in columns  # the failed migration left no trace
+        assert conn.execute(
+            text("SELECT count(*) FROM inventory_movements")
+        ).scalar() == 2
+
+    # The operator resolves the org-level row explicitly (it cannot be
+    # fabricated: it is removed), then the upgrade runs and backfills only
+    # what is determinable.
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM inventory_movements WHERE id_consumo_origen IS NULL")
+        )
+    command.upgrade(config, HEAD_REVISION)
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT location_id, type FROM inventory_movements ORDER BY id"
+            )
+        ).all()
+        # The consumption-linked row is derived from its visit — the only
+        # truthful location. Nothing was ever guessed.
+        assert rows == [(1, "SALIDA")]
+
+
+def test_downgrade_0008_restores_0007_and_reupgrade_rederives_locations(
+    inventory_ledger_database,
+):
+    url, engine = inventory_ledger_database
+    config = _alembic_config(url)
+
+    command.upgrade(config, HEAD_REVISION)
+    # A valid transfer pair at 0008: Sede Uno → Sede Dos.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO inventory_movements"
+                " (organization_id, product_id, location_id, type, quantity, transfer_id)"
+                " VALUES (1, 1, 1, 'TRANSFER_OUT', 1.00, 't' || repeat('0', 35))"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO inventory_movements"
+                " (organization_id, product_id, location_id, type, quantity, transfer_id)"
+                " VALUES (1, 1, 2, 'TRANSFER_IN', 1.00, 't' || repeat('0', 35))"
+            )
+        )
+
+    command.downgrade(config, "0007")
+
+    with engine.connect() as conn:
+        assert conn.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar() == "0007"
+        columns = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = 'public' AND table_name = 'inventory_movements'"
+                )
+            )
+        }
+        assert "location_id" not in columns
+        assert "transfer_id" not in columns
+        # Transfer rows cannot exist at 0007 (the old type CHECK forbids them);
+        # the SALIDA survives with its causal link intact.
+        rows = conn.execute(
+            text(
+                "SELECT type, quantity, id_consumo_origen"
+                " FROM inventory_movements ORDER BY id"
+            )
+        ).all()
+        assert rows == [("SALIDA", Decimal("2.00"), 1)]
+
+    command.upgrade(config, HEAD_REVISION)
+
+    with engine.connect() as conn:
+        assert conn.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar() == HEAD_REVISION
+        # The surviving SALIDA re-derives its location from the consumption
+        # chain — the strategy is truthful across cycles.
+        rows = conn.execute(
+            text("SELECT location_id, type FROM inventory_movements ORDER BY id")
+        ).all()
+        assert rows == [(1, "SALIDA")]

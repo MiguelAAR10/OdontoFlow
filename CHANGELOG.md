@@ -1,5 +1,26 @@
 # OdontoFlow Changelog
 
+## M4.2 — Location-Aware Inventory (2026-08-16)
+
+- Migration `0008`: `inventory_movements` gains `location_id` (NOT NULL,
+  composite FK into `locations(organization_id, id)`) — the ledger stays the
+  only stock authority; the balance is still derived, now per
+  Product × Location. Backfill derives consumption-linked SALIDA locations
+  from their visit chain and **refuses to fabricate** locations for org-level
+  rows (no such rows exist in any environment; the guard is explicit).
+- Transfers: `TRANSFER_OUT` / `TRANSFER_IN` movement pair sharing a
+  server-generated `transfer_id`, written in ONE transaction with the PF4
+  claim, stock floor check and audit; exactly-one-Out/In per transfer and the
+  pairing invariants are enforced by partial unique indexes plus a deferred
+  constraint trigger (a partial or inconsistent pair cannot commit).
+- `POST /products/{id}/transfers` (201, PF4-idempotent, `movements.create`
+  permission). Entries/adjustments now require `location_id` in the body;
+  balance and kardex take a required `?location_id=` query parameter.
+- `create_service_consumption` stock-out uses the Location of its
+  execution's Visit (never client-supplied); other locations are unaffected.
+- OpenAPI regenerated; full suite 384 passed (was 364); evidence in
+  `.audit/m4-pilot-fit/inventory-backend.md`.
+
 ## PF4 — Idempotent Commands (2026-08-15)
 
 - Added `command_receipts` table (migration `0004`): durable exactly-once

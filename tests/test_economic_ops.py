@@ -194,11 +194,33 @@ def make_product(session, *, organization_id=ORG, name="Anestesia", unit="ampoll
     )
 
 
-def make_entry(session, product_id, quantity, *, organization_id=ORG, unit_price=None):
+def make_location(session, *, organization_id=ORG, name="Sede Econ"):
+    location = Location(
+        organization_id=organization_id,
+        name=name,
+        timezone=LIMA,
+        is_active=True,
+    )
+    session.add(location)
+    session.commit()
+    return location.id
+
+
+def make_entry(session, product_id, quantity, *, organization_id=ORG, unit_price=None, location_id=None):
+    if location_id is None:
+        location_id = make_location(session, organization_id=organization_id)
     return register_entry(
         session,
         product_id,
-        type("D", (), {"quantity": Decimal(str(quantity)), "unit_price": unit_price})(),
+        type(
+            "D",
+            (),
+            {
+                "quantity": Decimal(str(quantity)),
+                "unit_price": unit_price,
+                "location_id": location_id,
+            },
+        )(),
         ctx=default_context(organization_id),
     )
 
@@ -294,7 +316,7 @@ def test_consumption_links_execution_and_product_with_snapshot(session):
     product = make_product(session)
     product_id = product.id
 
-    make_entry(session, product_id, Decimal("10.00"), unit_price=Decimal("20.00"))
+    make_entry(session, product_id, Decimal("10.00"), unit_price=Decimal("20.00"), location_id=ids["location_id"])
     consumption = create_service_consumption(
         session,
         execution_id,
@@ -322,7 +344,7 @@ def test_consumption_quantity_must_be_positive_and_price_non_negative(session):
     execution_id = execution.id
     product = make_product(session)
     product_id = product.id
-    make_entry(session, product_id, Decimal("5.00"))
+    make_entry(session, product_id, Decimal("5.00"), location_id=ids["location_id"])
 
     with pytest.raises(AppError) as exc:
         create_service_consumption(
@@ -366,8 +388,8 @@ def test_multiple_consumptions_per_execution_and_duplicate_rule(session):
     product_a_id = product_a.id
     product_b = make_product(session, name="Guantes")
     product_b_id = product_b.id
-    make_entry(session, product_a_id, Decimal("5.00"))
-    make_entry(session, product_b_id, Decimal("5.00"))
+    make_entry(session, product_a_id, Decimal("5.00"), location_id=ids["location_id"])
+    make_entry(session, product_b_id, Decimal("5.00"), location_id=ids["location_id"])
 
     create_service_consumption(
         session,
@@ -433,7 +455,7 @@ def test_concurrent_duplicate_consumption_settles_as_422(migrated_engine, sessio
     execution_id = execution.id
     product = make_product(session)
     product_id = product.id
-    make_entry(session, product_id, Decimal("5.00"))
+    make_entry(session, product_id, Decimal("5.00"), location_id=ids["location_id"])
 
     maker = sessionmaker(bind=migrated_engine, autoflush=False, expire_on_commit=False)
     barrier = threading.Barrier(2)
@@ -768,7 +790,7 @@ def test_audit_provenance_for_economic_creates(session):
     product_id = product.id
     execution = make_execution(session, ids)
     execution_id = execution.id
-    make_entry(session, product_id, Decimal("5.00"))
+    make_entry(session, product_id, Decimal("5.00"), location_id=ids["location_id"])
     create_service_consumption(
         session,
         execution_id,
@@ -834,7 +856,7 @@ def test_economic_creates_are_idempotent(session):
     assert p2.outcome["resource_id"] == str(product_id)
     session.rollback()  # the replay read left a transaction open
 
-    make_entry(session, product_id, Decimal("5.00"))
+    make_entry(session, product_id, Decimal("5.00"), location_id=ids["location_id"])
 
     execution = make_execution(session, ids)
     execution_id = execution.id
@@ -994,7 +1016,7 @@ def test_economic_http_journey(client, session):
 
     client.post(
         f"/products/{product_id}/entries",
-        json={"quantity": "10.00"},
+        json={"quantity": "10.00", "location_id": ids["location_id"]},
         headers={"Idempotency-Key": "http-entry-1"},
     )
     consumption = client.post(

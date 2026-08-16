@@ -170,11 +170,33 @@ def make_product(session, *, organization_id=ORG, name="Anestesia", kind="consum
     )
 
 
-def make_entry(session, product_id, quantity, *, organization_id=ORG):
+def make_location(session, *, organization_id=ORG, name="Sede Inv"):
+    location = Location(
+        organization_id=organization_id,
+        name=name,
+        timezone=LIMA,
+        is_active=True,
+    )
+    session.add(location)
+    session.commit()
+    return location.id
+
+
+def make_entry(session, product_id, quantity, *, organization_id=ORG, location_id=None):
+    if location_id is None:
+        location_id = make_location(session, organization_id=organization_id)
     return register_entry(
         session,
         product_id,
-        type("D", (), {"quantity": Decimal(str(quantity)), "unit_price": Decimal("20.00")})(),
+        type(
+            "D",
+            (),
+            {
+                "quantity": Decimal(str(quantity)),
+                "unit_price": Decimal("20.00"),
+                "location_id": location_id,
+            },
+        )(),
         ctx=default_context(organization_id),
     )
 
@@ -218,14 +240,15 @@ def make_execution(session, ids, *, organization_id=None, dni=None):
 def test_entries_and_derived_balance(session):
     product = make_product(session)
     product_id = product.id
+    loc = make_location(session)
 
-    make_entry(session, product_id, "10.00")
-    make_entry(session, product_id, "5.00")
+    make_entry(session, product_id, "10.00", location_id=loc)
+    make_entry(session, product_id, "5.00", location_id=loc)
 
-    balance = get_balance(session, product_id, ctx=default_context(ORG))
+    balance = get_balance(session, product_id, location_id=loc, ctx=default_context(ORG))
     assert balance == Decimal("15.00")
 
-    rows = list_movements(session, product_id, ctx=default_context(ORG))
+    rows = list_movements(session, product_id, location_id=loc, ctx=default_context(ORG))
     assert len(rows) == 2
     assert all(row.type == ENTRADA for row in rows)
     session.rollback()
@@ -234,7 +257,8 @@ def test_entries_and_derived_balance(session):
 def test_balance_is_derived_and_never_stored(session):
     product = make_product(session)
     product_id = product.id
-    make_entry(session, product_id, "7.00")
+    loc = make_location(session)
+    make_entry(session, product_id, "7.00", location_id=loc)
 
     # No stock column exists on products: the ledger is the only truth.
     columns = {
@@ -255,15 +279,16 @@ def test_balance_is_derived_and_never_stored(session):
 def test_movement_type_and_quantity_checks(session):
     product = make_product(session)
     product_id = product.id
+    loc = make_location(session)
 
     # ENTRADA with non-positive quantity → DB CHECK.
     with pytest.raises(Exception) as exc:
         session.execute(
             text(
-                "INSERT INTO inventory_movements (organization_id, product_id, type, quantity) "
-                "VALUES (:o, :p, 'ENTRADA', 0)"
+                "INSERT INTO inventory_movements (organization_id, product_id, location_id, type, quantity) "
+                "VALUES (:o, :p, :l, 'ENTRADA', 0)"
             ),
-            {"o": ORG, "p": product_id},
+            {"o": ORG, "p": product_id, "l": loc},
         )
         session.commit()
     session.rollback()
@@ -273,10 +298,10 @@ def test_movement_type_and_quantity_checks(session):
     with pytest.raises(Exception) as exc:
         session.execute(
             text(
-                "INSERT INTO inventory_movements (organization_id, product_id, type, quantity) "
-                "VALUES (:o, :p, 'TRANSFER', 1)"
+                "INSERT INTO inventory_movements (organization_id, product_id, location_id, type, quantity) "
+                "VALUES (:o, :p, :l, 'TRANSFER', 1)"
             ),
-            {"o": ORG, "p": product_id},
+            {"o": ORG, "p": product_id, "l": loc},
         )
         session.commit()
     session.rollback()
@@ -288,10 +313,10 @@ def test_movement_type_and_quantity_checks(session):
     with pytest.raises(Exception) as exc:
         session.execute(
             text(
-                "INSERT INTO inventory_movements (organization_id, product_id, type, quantity) "
-                "VALUES (:o, :p, 'ADJUSTMENT', 1)"
+                "INSERT INTO inventory_movements (organization_id, product_id, location_id, type, quantity) "
+                "VALUES (:o, :p, :l, 'ADJUSTMENT', 1)"
             ),
-            {"o": ORG, "p": product_id},
+            {"o": ORG, "p": product_id, "l": loc},
         )
         session.commit()
     session.rollback()
@@ -301,10 +326,10 @@ def test_movement_type_and_quantity_checks(session):
     with pytest.raises(Exception) as exc:
         session.execute(
             text(
-                "INSERT INTO inventory_movements (organization_id, product_id, type, quantity, reason) "
-                "VALUES (:o, :p, 'ADJUSTMENT', 0, 'inventario')"
+                "INSERT INTO inventory_movements (organization_id, product_id, location_id, type, quantity, reason) "
+                "VALUES (:o, :p, :l, 'ADJUSTMENT', 0, 'inventario')"
             ),
-            {"o": ORG, "p": product_id},
+            {"o": ORG, "p": product_id, "l": loc},
         )
         session.commit()
     session.rollback()
@@ -314,36 +339,38 @@ def test_movement_type_and_quantity_checks(session):
 def test_adjustment_with_reason_and_signed_quantity(session):
     product = make_product(session)
     product_id = product.id
-    make_entry(session, product_id, "10.00")
+    loc = make_location(session)
+    make_entry(session, product_id, "10.00", location_id=loc)
 
     register_adjustment(
         session,
         product_id,
-        type("D", (), {"quantity": Decimal("-3.00"), "reason": "merma detectada"})(),
+        type("D", (), {"quantity": Decimal("-3.00"), "reason": "merma detectada", "location_id": loc})(),
         ctx=default_context(ORG),
     )
-    assert get_balance(session, product_id, ctx=default_context(ORG)) == Decimal("7.00")
+    assert get_balance(session, product_id, location_id=loc, ctx=default_context(ORG)) == Decimal("7.00")
     session.rollback()
 
     register_adjustment(
         session,
         product_id,
-        type("D", (), {"quantity": Decimal("2.00"), "reason": "conteo superior"})(),
+        type("D", (), {"quantity": Decimal("2.00"), "reason": "conteo superior", "location_id": loc})(),
         ctx=default_context(ORG),
     )
-    assert get_balance(session, product_id, ctx=default_context(ORG)) == Decimal("9.00")
+    assert get_balance(session, product_id, location_id=loc, ctx=default_context(ORG)) == Decimal("9.00")
     session.rollback()
 
 
 def test_negative_adjustment_rejected_without_stock(session):
     product = make_product(session)
     product_id = product.id
+    loc = make_location(session)
 
     with pytest.raises(AppError) as exc:
         register_adjustment(
             session,
             product_id,
-            type("D", (), {"quantity": Decimal("-1.00"), "reason": "merma"})(),
+            type("D", (), {"quantity": Decimal("-1.00"), "reason": "merma", "location_id": loc})(),
             ctx=default_context(ORG),
         )
     assert exc.value.code == ErrorCode.INVALID_INPUT
@@ -355,16 +382,18 @@ def test_negative_adjustment_rejected_without_stock(session):
 def test_cross_tenant_movements_rejected_by_db(session):
     org_b = create_organization(session, "Otra Clínica").id
     product_b = make_product(session, organization_id=org_b, name="Anestesia B")
-    make_entry(session, product_b.id, "5.00", organization_id=org_b)
+    loc_b = make_location(session, organization_id=org_b, name="Sede B")
+    make_entry(session, product_b.id, "5.00", organization_id=org_b, location_id=loc_b)
 
     # Org A's ledger cannot reference org B's product.
+    loc_a = make_location(session)
     with pytest.raises(Exception) as exc:
         session.execute(
             text(
-                "INSERT INTO inventory_movements (organization_id, product_id, type, quantity) "
-                "VALUES (:o, :p, 'ENTRADA', 1)"
+                "INSERT INTO inventory_movements (organization_id, product_id, location_id, type, quantity) "
+                "VALUES (:o, :p, :l, 'ENTRADA', 1)"
             ),
-            {"o": ORG, "p": product_b.id},
+            {"o": ORG, "p": product_b.id, "l": loc_a},
         )
         session.commit()
     session.rollback()
@@ -372,7 +401,7 @@ def test_cross_tenant_movements_rejected_by_db(session):
 
     # Org A cannot read org B's product balance (NOT_FOUND, E8).
     with pytest.raises(AppError) as exc:
-        get_balance(session, product_b.id, ctx=default_context(ORG))
+        get_balance(session, product_b.id, location_id=loc_b, ctx=default_context(ORG))
     assert exc.value.code == ErrorCode.NOT_FOUND
     session.rollback()
 
@@ -382,9 +411,10 @@ def test_cross_tenant_movements_rejected_by_db(session):
 
 def test_consumption_emits_salida_in_the_same_transaction(session):
     ids = seed_booking(session)
+    loc = ids["location_id"]
     product = make_product(session)
     product_id = product.id
-    make_entry(session, product_id, "10.00")
+    make_entry(session, product_id, "10.00", location_id=loc)
     execution = make_execution(session, ids)
     execution_id = execution.id
 
@@ -395,11 +425,11 @@ def test_consumption_emits_salida_in_the_same_transaction(session):
         ctx=default_context(ORG),
     )
 
-    assert get_balance(session, product_id, ctx=default_context(ORG)) == Decimal("7.00")
+    assert get_balance(session, product_id, location_id=loc, ctx=default_context(ORG)) == Decimal("7.00")
     session.rollback()
 
     # Exactly one SALIDA, causally linked 1:1 via id_consumo_origen.
-    rows = list_movements(session, product_id, ctx=default_context(ORG))
+    rows = list_movements(session, product_id, location_id=loc, ctx=default_context(ORG))
     salidas = [row for row in rows if row.type == SALIDA]
     assert len(salidas) == 1
     consumption_id = salidas[0].id_consumo_origen
@@ -413,9 +443,10 @@ def test_consumption_emits_salida_in_the_same_transaction(session):
 
 def test_consumption_rejected_when_stock_insufficient(session):
     ids = seed_booking(session)
+    loc = ids["location_id"]
     product = make_product(session)
     product_id = product.id
-    make_entry(session, product_id, "2.00")
+    make_entry(session, product_id, "2.00", location_id=loc)
     execution = make_execution(session, ids)
     execution_id = execution.id
 
@@ -440,9 +471,10 @@ def test_concurrent_consumptions_never_overdraw(migrated_engine, session):
     serializes the ledger sum and the loser is rejected — the balance can
     never go negative."""
     ids = seed_booking(session)
+    loc = ids["location_id"]
     product = make_product(session)
     product_id = product.id
-    make_entry(session, product_id, "5.00")
+    make_entry(session, product_id, "5.00", location_id=loc)
     execution = make_execution(session, ids)
     execution_id = execution.id
 
@@ -489,16 +521,17 @@ def test_concurrent_consumptions_never_overdraw(migrated_engine, session):
     assert rejected[0][1] == ErrorCode.INVALID_INPUT, outcomes
 
     db = sessionmaker(bind=migrated_engine, autoflush=False, expire_on_commit=False)()
-    balance = available_balance(db, product_id, ORG)
+    balance = available_balance(db, product_id, ORG, loc)
     db.close()
     assert balance == Decimal("1.00")  # 5 - 4 = 1; never negative
 
 
 def test_salida_linkage_is_unique_and_causal(session):
     ids = seed_booking(session)
+    loc = ids["location_id"]
     product = make_product(session)
     product_id = product.id
-    make_entry(session, product_id, "5.00")
+    make_entry(session, product_id, "5.00", location_id=loc)
     execution = make_execution(session, ids)
     execution_id = execution.id
 
@@ -513,10 +546,10 @@ def test_salida_linkage_is_unique_and_causal(session):
     with pytest.raises(Exception) as exc:
         session.execute(
             text(
-                "INSERT INTO inventory_movements (organization_id, product_id, type, quantity, id_consumo_origen) "
-                "VALUES (:o, :p, 'SALIDA', 1, :c)"
+                "INSERT INTO inventory_movements (organization_id, product_id, location_id, type, quantity, id_consumo_origen) "
+                "VALUES (:o, :p, :l, 'SALIDA', 1, :c)"
             ),
-            {"o": ORG, "p": product_id, "c": consumption.id},
+            {"o": ORG, "p": product_id, "l": loc, "c": consumption.id},
         )
         session.commit()
     session.rollback()
@@ -529,6 +562,7 @@ def test_salida_linkage_is_unique_and_causal(session):
 def test_inventory_commands_enforce_permissions(session):
     product = make_product(session)
     product_id = product.id
+    loc = make_location(session)
     no_perm = seed_actor(session, codes=())
     ctx = ctx_for(no_perm)
 
@@ -536,7 +570,7 @@ def test_inventory_commands_enforce_permissions(session):
         register_entry(
             session,
             product_id,
-            type("D", (), {"quantity": Decimal("1"), "unit_price": None})(),
+            type("D", (), {"quantity": Decimal("1"), "unit_price": None, "location_id": loc})(),
             ctx=ctx,
         )
     assert exc.value.code.value == "PERMISSION_DENIED"
@@ -546,19 +580,19 @@ def test_inventory_commands_enforce_permissions(session):
         register_adjustment(
             session,
             product_id,
-            type("D", (), {"quantity": Decimal("1"), "reason": "x"})(),
+            type("D", (), {"quantity": Decimal("1"), "reason": "x", "location_id": loc})(),
             ctx=ctx,
         )
     assert exc.value.code.value == "PERMISSION_DENIED"
     session.rollback()
 
     with pytest.raises(AppError) as exc:
-        list_movements(session, product_id, ctx=ctx)
+        list_movements(session, product_id, location_id=loc, ctx=ctx)
     assert exc.value.code.value == "PERMISSION_DENIED"
     session.rollback()
 
     with pytest.raises(AppError) as exc:
-        get_balance(session, product_id, ctx=ctx)
+        get_balance(session, product_id, location_id=loc, ctx=ctx)
     assert exc.value.code.value == "PERMISSION_DENIED"
     session.rollback()
 
@@ -566,19 +600,20 @@ def test_inventory_commands_enforce_permissions(session):
 def test_audit_provenance_for_inventory_creates(session):
     product = make_product(session)
     product_id = product.id
+    loc = make_location(session)
     actor = seed_actor(session, codes=(MOVEMENTS_CREATE,))
     ctx = ctx_for(actor)
 
     register_entry(
         session,
         product_id,
-        type("D", (), {"quantity": Decimal("5"), "unit_price": Decimal("10")})(),
+        type("D", (), {"quantity": Decimal("5"), "unit_price": Decimal("10"), "location_id": loc})(),
         ctx=ctx,
     )
     register_adjustment(
         session,
         product_id,
-        type("D", (), {"quantity": Decimal("-1"), "reason": "merma"})(),
+        type("D", (), {"quantity": Decimal("-1"), "reason": "merma", "location_id": loc})(),
         ctx=ctx,
     )
 
@@ -592,16 +627,19 @@ def test_audit_provenance_for_inventory_creates(session):
 def test_inventory_creates_are_idempotent(session):
     product = make_product(session)
     product_id = product.id
+    loc = make_location(session)
     ctx = default_context(ORG)
 
-    entry_payload = type("D", (), {"quantity": Decimal("5"), "unit_price": Decimal("10")})()
+    entry_payload = type(
+        "D", (), {"quantity": Decimal("5"), "unit_price": Decimal("10"), "location_id": loc}
+    )()
     e1 = run_idempotent_command(
         session,
         operation=register_entry,
         operation_name=OP_ENTRIES_CREATE,
         key="inv-entry-1",
         ctx=ctx,
-        params={"product_id": product_id, "quantity": "5", "unit_price": "10"},
+        params={"product_id": product_id, "quantity": "5", "unit_price": "10", "location_id": loc},
         product_id=product_id,
         data=entry_payload,
     )
@@ -612,21 +650,23 @@ def test_inventory_creates_are_idempotent(session):
         operation_name=OP_ENTRIES_CREATE,
         key="inv-entry-1",
         ctx=ctx,
-        params={"product_id": product_id, "quantity": "5", "unit_price": "10"},
+        params={"product_id": product_id, "quantity": "5", "unit_price": "10", "location_id": loc},
         product_id=product_id,
         data=entry_payload,
     )
     assert e2.replayed is True
     assert e2.outcome["resource_id"] == str(entry_id)
 
-    adjustment_payload = type("D", (), {"quantity": Decimal("-1"), "reason": "merma"})()
+    adjustment_payload = type(
+        "D", (), {"quantity": Decimal("-1"), "reason": "merma", "location_id": loc}
+    )()
     a1 = run_idempotent_command(
         session,
         operation=register_adjustment,
         operation_name=OP_ADJUSTMENTS_CREATE,
         key="inv-adj-1",
         ctx=ctx,
-        params={"product_id": product_id, "quantity": "-1", "reason": "merma"},
+        params={"product_id": product_id, "quantity": "-1", "reason": "merma", "location_id": loc},
         product_id=product_id,
         data=adjustment_payload,
     )
@@ -636,7 +676,7 @@ def test_inventory_creates_are_idempotent(session):
         operation_name=OP_ADJUSTMENTS_CREATE,
         key="inv-adj-1",
         ctx=ctx,
-        params={"product_id": product_id, "quantity": "-1", "reason": "merma"},
+        params={"product_id": product_id, "quantity": "-1", "reason": "merma", "location_id": loc},
         product_id=product_id,
         data=adjustment_payload,
     )
@@ -644,7 +684,7 @@ def test_inventory_creates_are_idempotent(session):
     assert a2.outcome["resource_id"] == str(a1.result.id)
 
     assert session.scalar(select(func.count()).select_from(InventoryMovement)) == 2
-    assert get_balance(session, product_id, ctx=ctx) == Decimal("4.00")
+    assert get_balance(session, product_id, location_id=loc, ctx=ctx) == Decimal("4.00")
     session.rollback()
 
 
@@ -674,6 +714,8 @@ def client(api_app):
 
 
 def test_inventory_http_journey(client, session):
+    loc = make_location(session)
+
     product = client.post(
         "/products",
         json={"name": "Anestesia", "unit": "ampolla", "kind": "consumible"},
@@ -683,49 +725,51 @@ def test_inventory_http_journey(client, session):
 
     entry = client.post(
         f"/products/{product_id}/entries",
-        json={"quantity": "10.00", "unit_price": "20.00"},
+        json={"quantity": "10.00", "unit_price": "20.00", "location_id": loc},
         headers={"Idempotency-Key": "inv-http-e1"},
     )
     assert entry.status_code == 201, entry.text
     assert entry.json()["type"] == "ENTRADA"
+    assert entry.json()["location_id"] == loc
 
     replay = client.post(
         f"/products/{product_id}/entries",
-        json={"quantity": "10.00", "unit_price": "20.00"},
+        json={"quantity": "10.00", "unit_price": "20.00", "location_id": loc},
         headers={"Idempotency-Key": "inv-http-e1"},
     )
     assert replay.status_code == 201
     assert replay.json()["id"] == entry.json()["id"]
     assert replay.headers.get("Idempotent-Replay") == "true"
 
-    balance = client.get(f"/products/{product_id}/balance")
+    balance = client.get(f"/products/{product_id}/balance", params={"location_id": loc})
     assert balance.status_code == 200
     assert balance.json()["available"] == "10.00"
+    assert balance.json()["location_id"] == loc
 
     adjustment = client.post(
         f"/products/{product_id}/adjustments",
-        json={"quantity": "-2.00", "reason": "merma"},
+        json={"quantity": "-2.00", "reason": "merma", "location_id": loc},
         headers={"Idempotency-Key": "inv-http-a1"},
     )
     assert adjustment.status_code == 201, adjustment.text
     assert adjustment.json()["type"] == "ADJUSTMENT"
 
-    balance = client.get(f"/products/{product_id}/balance")
+    balance = client.get(f"/products/{product_id}/balance", params={"location_id": loc})
     assert balance.json()["available"] == "8.00"
 
-    movements = client.get(f"/products/{product_id}/movements")
+    movements = client.get(f"/products/{product_id}/movements", params={"location_id": loc})
     assert len(movements.json()) == 2
 
     bad_adjustment = client.post(
         f"/products/{product_id}/adjustments",
-        json={"quantity": "-100.00", "reason": "merma"},
+        json={"quantity": "-100.00", "reason": "merma", "location_id": loc},
     )
     assert bad_adjustment.status_code == 422
     assert bad_adjustment.json()["error"]["code"] == "INVALID_INPUT"
 
     missing_reason = client.post(
         f"/products/{product_id}/adjustments",
-        json={"quantity": "1.00"},
+        json={"quantity": "1.00", "location_id": loc},
     )
     assert missing_reason.status_code == 422
 
@@ -737,12 +781,13 @@ def test_salida_product_mismatch_rejected_by_trigger(session):
     """The DB trigger makes a consumption-linked SALIDA of a different product
     structurally impossible (the composite FK alone cannot compare columns)."""
     ids = seed_booking(session)
+    loc = ids["location_id"]
     product_a = make_product(session, name="Anestesia")
     product_a_id = product_a.id
     product_b = make_product(session, name="Guantes")
     product_b_id = product_b.id
-    make_entry(session, product_a_id, "5.00")
-    make_entry(session, product_b_id, "5.00")
+    make_entry(session, product_a_id, "5.00", location_id=loc)
+    make_entry(session, product_b_id, "5.00", location_id=loc)
     execution = make_execution(session, ids)
     execution_id = execution.id
 
@@ -756,10 +801,10 @@ def test_salida_product_mismatch_rejected_by_trigger(session):
     with pytest.raises(Exception) as exc:
         session.execute(
             text(
-                "INSERT INTO inventory_movements (organization_id, product_id, type, quantity, id_consumo_origen) "
-                "VALUES (:o, :p, 'SALIDA', 1, :c)"
+                "INSERT INTO inventory_movements (organization_id, product_id, location_id, type, quantity, id_consumo_origen) "
+                "VALUES (:o, :p, :l, 'SALIDA', 1, :c)"
             ),
-            {"o": ORG, "p": product_b_id, "c": consumption.id},
+            {"o": ORG, "p": product_b_id, "l": loc, "c": consumption.id},
         )
         session.commit()
     session.rollback()
