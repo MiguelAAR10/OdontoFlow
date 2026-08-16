@@ -318,7 +318,7 @@ or a domain rule.
 **The rule:** migrate domain behavior and invariants that were proven to matter — not Flask endpoints,
 Marshmallow schemas, or any other legacy framework decision. MediStock is the *donor of domain knowledge*
 (what a dental clinic's operations actually need to track), never a codebase OdontoFlow edits or a target
-architecture to reproduce. `../../AI-EdgeRunners/medistock` remains read-only; this map is the result of a targeted, read-only
+architecture to reproduce. `../../medistock` remains read-only; this map is the result of a targeted, read-only
 inspection of exactly the domain concepts requested — `src/clinica_backend/app/models/*.py`,
 `app/services/*.py`, and `src/sql/migrations/*.sql` — not a broad audit of the legacy repository.
 
@@ -392,7 +392,7 @@ the concrete legacy failure that principle is a response to.
   onto the legacy schema; not migrated unless a future Intelligence/Optimization vertical (§12) specifically
   justifies reusing its approach.
 
-None of the above was modified, and no broader audit of `../../AI-EdgeRunners/medistock` was performed beyond the ten domain
+None of the above was modified, and no broader audit of `../../medistock` was performed beyond the ten domain
 concepts and the inventory mechanism named in this section.
 
 ---

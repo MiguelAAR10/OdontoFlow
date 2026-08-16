@@ -71,7 +71,7 @@ Caller (HTTP today; future agent tool)
 | Runtime | Docker Compose (Postgres), Python 3.12 |
 
 No Redis. No Kafka. No async migration. No LLM libraries. The frontend lives in a sibling repository
-(`../odontosmart-frontend`); this repo is the domain authority and ships no UI code.
+(`../odontoflow-frontend`); this repo is the domain authority and ships no UI code.
 
 ---
 
