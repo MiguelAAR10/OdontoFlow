@@ -166,16 +166,18 @@ def book_appointment_with_retry(
 
 @router.post("/availability-rules", response_model=AvailabilityRuleRead, status_code=201)
 def create_availability_rule_route(
-    payload: AvailabilityRuleCreate, db: Session = Depends(get_db)
+    payload: AvailabilityRuleCreate, request: Request, db: Session = Depends(get_db)
 ) -> AvailabilityRuleRead:
-    return create_availability_rule(db, payload)
+    ctx = resolve_http_context(request)
+    return create_availability_rule(db, payload, ctx=ctx)
 
 
 @router.post("/schedule-blocks", response_model=ScheduleBlockRead, status_code=201)
 def create_schedule_block_route(
-    payload: ScheduleBlockCreate, db: Session = Depends(get_db)
+    payload: ScheduleBlockCreate, request: Request, db: Session = Depends(get_db)
 ) -> ScheduleBlockRead:
-    return create_schedule_block(db, payload)
+    ctx = resolve_http_context(request)
+    return create_schedule_block(db, payload, ctx=ctx)
 
 
 @router.post("/slots/query", response_model=list[SlotResult])

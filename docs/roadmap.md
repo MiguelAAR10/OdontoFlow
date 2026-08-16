@@ -39,14 +39,20 @@ that order and what each NEXT/LATER item actually depends on.
   (booking/reschedule/cancel with `Idempotency-Key`); remaining screens (Pacientes→Leads, Caja, Inventario,
   Chat, Agente) stay MOCK/PROTOTYPE until their domain authority exists.
 
+- **Inventory ledger** (PF7) — append-only `InventoryMovement` (ENTRADA/SALIDA/ADJUSTMENT with per-type
+  CHECKs and reason-required corrections), derived read-time `InventoryBalance` (no stock column, no trigger
+  cache), consumption→SALIDA 1:1 in the same transaction with a DB trigger for product causality, and the
+  negative-balance guard via product row lock + ledger sum. Closed at the inventory commit.
+- **PF closure** — every remaining mutating service (leads, services, locations, practitioners, capabilities,
+  memberships, availability rules/blocks) is now ctx-gated permission-checked; BLOCKER-2 resolved (lead
+  creation requires an org-wide grant); runtime `create_organization` provisions system access atomically.
+
 ## NEXT
 
-- **Platform Foundation closure.** Close the remaining gaps in `architecture.md` §9: extend
-  `ExecutionContext`/permission enforcement beyond the scheduling endpoints; resolve BLOCKER-2 (whether a
-  location-scoped principal can create a `Lead`, given `Lead` has no `location_id` today).
-- **Inventory vertical.** `InventoryMovement` (append-only ledger) → derived `InventoryBalance` per
-  `.audit/economic-ops/next-inventory-contract.md`; consumption will emit its SALIDA movement in the same
-  transaction.
+- **Platform Foundation closure.** Remaining `architecture.md` §9 items (review any stragglers).
+- **Sale stock-out** for `kind='reventa'` products (movement exists; invoice linkage deferred).
+- **Finance follow-ups** (deferred): payment reversal, method catalog, Invoice/discount engine.
+- **Multi-location stock & transfers** (additive later: `location_id` + TRANSFER type).
 
 ## LATER
 

@@ -42,6 +42,8 @@ from app.iam.permissions import (
 )
 from app.iam.service import require_permission
 from app.idempotency.service import IdempotencyClaim, claim_receipt, settle_receipt
+from app.inventory.models import InventoryMovement, SALIDA
+from app.inventory.service import require_stock
 from app.tenancy import scoped
 
 OP_PRODUCTS_CREATE = "products.create"
@@ -270,6 +272,11 @@ def create_service_consumption(
                 "The product is already consumed in this execution.",
             )
 
+        # Inventory (PF7): the stock floor is the ledger sum; the SALIDA
+        # movement lands atomically with the consumption row (1:1 via
+        # id_consumo_origen UNIQUE).
+        require_stock(session, data.product_id, org_id, data.quantity)
+
         consumption = ServiceConsumption(
             organization_id=org_id,
             service_execution_id=execution_id,
@@ -289,6 +296,17 @@ def create_service_consumption(
                     "The product is already consumed in this execution.",
                 ) from exc
             raise
+        session.add(
+            InventoryMovement(
+                organization_id=org_id,
+                product_id=data.product_id,
+                type=SALIDA,
+                quantity=data.quantity,
+                unit_price=data.unit_price,
+                id_consumo_origen=consumption.id,
+            )
+        )
+        session.flush()
 
         record_event(
             session,

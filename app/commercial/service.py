@@ -9,7 +9,7 @@ from app.commercial.schemas import LeadCreate
 from app.context import default_context
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
-from app.iam.permissions import LEADS_READ
+from app.iam.permissions import LEADS_CREATE, LEADS_READ
 from app.iam.service import require_permission
 from app.tenancy import resolve_organization_id, scoped
 
@@ -61,9 +61,19 @@ def _validate_service_need(
 
 
 def create_lead(
-    session: Session, data: LeadCreate, organization_id: int | None = None
+    session: Session,
+    data: LeadCreate,
+    organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
 ) -> Lead:
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        # BLOCKER-2 resolution: a Lead has no location dimension, so this is
+        # an organization-wide operation — only an org-wide grant satisfies it
+        # (E5); a location-scoped grant can never create leads.
+        require_permission(session, resolved, LEADS_CREATE, location_id=None)
+
     phone = _normalize_phone(data.contact_phone)
     email = _normalize_contact_email(data.contact_email)
     source = _validate_acquisition_source(data.acquisition_source)

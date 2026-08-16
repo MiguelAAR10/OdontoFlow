@@ -53,6 +53,7 @@ this diagram if the two ever disagree.
 | `app/idempotency` | `CommandReceipt` + `run_idempotent_command` | PF4: claim-first exactly-once for mutations, replay of stored outcomes |
 | `app/clinical` | `Patient`, `Visit`, `ServiceExecution` | PF5: org-owned patients, attended encounters, executed services with price snapshot |
 | `app/economics` | `Product`, `ServiceConsumption`, `Charge`, `Payment` | PF6: org-owned product catalog (no stock), clinical consumption with price snapshot, execution-anchored charges with derived paid/outstanding |
+| `app/inventory` | `InventoryMovement` (append-only ledger), derived `InventoryBalance` | PF7: the only stock truth; ENTRADA/SALIDA/ADJUSTMENT, consumption-linked SALIDA in the same transaction, no `stock_actual` anywhere |
 
 `app/context.py` (HTTP context adapter), `app/tenancy.py` (pre-PF3 bootstrap-organization seam, now superseded
 by `ExecutionContext` for booking/cancel/reschedule but still the fallback), `app/db.py` (engine/session),

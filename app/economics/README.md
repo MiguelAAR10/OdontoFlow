@@ -32,7 +32,7 @@ migration, not a full Finance or Inventory system.
 ## Invariants
 
 - `products`: `UNIQUE(org, name)`; `kind IN ('consumible','reventa')` CHECK; no stock/price columns.
-- `service_consumptions`: composite FKs (org, execution) and (org, product); `UNIQUE(org, execution, product)` (one product per line); `quantity > 0`; `unit_price >= 0` snapshot; line amount derived (`quantity × unit_price`).
+- `service_consumptions`: composite FKs (org, execution) and (org, product); `UNIQUE(org, execution, product)` (one product per line); `quantity > 0`; `unit_price >= 0` snapshot; line amount derived (`quantity × unit_price`). Consumption is real clinical use with a **stock floor**: the inventory ledger (PF7) must cover the quantity, and the SALIDA movement lands atomically in the same transaction (1:1 via `id_consumo_origen`).
 - `charges`: `UNIQUE(org, execution)` (one charge per execution); `amount > 0`; defaults to the execution's price snapshot (never re-guessed).
 - `payments`: composite FK (org, charge); `amount > 0`; append-only (no delete-orphan; FK RESTRICT; reversal, never delete); **overpayment structurally impossible**: the authoritative path locks the charge row `FOR UPDATE` and re-checks the sum — concurrent payments serialize deterministically. Documented deviation: the money rule lives on the single mutation path, not a declarative CHECK (a CHECK against a derived sum is not expressible in DDL; a second writer must use the same service).
 - All FKs RESTRICT; integer Identity PKs; timestamptz; Decimal end-to-end.
@@ -73,7 +73,5 @@ payments append-only at the ORM level.
 
 ## Next
 
-- Inventory vertical per `.audit/economic-ops/next-inventory-contract.md`
-  (`InventoryMovement` append-only ledger → derived `InventoryBalance`;
-  consumption will emit its SALIDA movement in the same transaction).
 - Finance follow-ups (deferred): payment reversal, method catalog, Invoice/discount engine.
+- Sale stock-out for `kind='reventa'` products (movement exists; invoice linkage deferred).

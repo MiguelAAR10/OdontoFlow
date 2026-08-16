@@ -33,6 +33,7 @@ from app.commercial.models import Lead
 from app.context import default_context
 from app.db import get_db
 from app.economics.models import Charge, Payment, Product, ServiceConsumption
+from app.inventory.service import register_entry
 from app.economics.service import (
     OP_CHARGES_CREATE,
     OP_CONSUMPTIONS_CREATE,
@@ -193,6 +194,15 @@ def make_product(session, *, organization_id=ORG, name="Anestesia", unit="ampoll
     )
 
 
+def make_entry(session, product_id, quantity, *, organization_id=ORG, unit_price=None):
+    return register_entry(
+        session,
+        product_id,
+        type("D", (), {"quantity": Decimal(str(quantity)), "unit_price": unit_price})(),
+        ctx=default_context(organization_id),
+    )
+
+
 def make_execution(session, ids, *, organization_id=None, dni=None):
     organization_id = organization_id or ids["organization_id"]
     patient = make_patient(
@@ -284,6 +294,7 @@ def test_consumption_links_execution_and_product_with_snapshot(session):
     product = make_product(session)
     product_id = product.id
 
+    make_entry(session, product_id, Decimal("10.00"), unit_price=Decimal("20.00"))
     consumption = create_service_consumption(
         session,
         execution_id,
@@ -311,6 +322,7 @@ def test_consumption_quantity_must_be_positive_and_price_non_negative(session):
     execution_id = execution.id
     product = make_product(session)
     product_id = product.id
+    make_entry(session, product_id, Decimal("5.00"))
 
     with pytest.raises(AppError) as exc:
         create_service_consumption(
@@ -354,6 +366,8 @@ def test_multiple_consumptions_per_execution_and_duplicate_rule(session):
     product_a_id = product_a.id
     product_b = make_product(session, name="Guantes")
     product_b_id = product_b.id
+    make_entry(session, product_a_id, Decimal("5.00"))
+    make_entry(session, product_b_id, Decimal("5.00"))
 
     create_service_consumption(
         session,
@@ -419,6 +433,7 @@ def test_concurrent_duplicate_consumption_settles_as_422(migrated_engine, sessio
     execution_id = execution.id
     product = make_product(session)
     product_id = product.id
+    make_entry(session, product_id, Decimal("5.00"))
 
     maker = sessionmaker(bind=migrated_engine, autoflush=False, expire_on_commit=False)
     barrier = threading.Barrier(2)
@@ -753,6 +768,7 @@ def test_audit_provenance_for_economic_creates(session):
     product_id = product.id
     execution = make_execution(session, ids)
     execution_id = execution.id
+    make_entry(session, product_id, Decimal("5.00"))
     create_service_consumption(
         session,
         execution_id,
@@ -817,6 +833,8 @@ def test_economic_creates_are_idempotent(session):
     assert p2.replayed is True
     assert p2.outcome["resource_id"] == str(product_id)
     session.rollback()  # the replay read left a transaction open
+
+    make_entry(session, product_id, Decimal("5.00"))
 
     execution = make_execution(session, ids)
     execution_id = execution.id
@@ -974,6 +992,11 @@ def test_economic_http_journey(client, session):
     execution = make_execution(session, ids)
     execution_id = execution.id
 
+    client.post(
+        f"/products/{product_id}/entries",
+        json={"quantity": "10.00"},
+        headers={"Idempotency-Key": "http-entry-1"},
+    )
     consumption = client.post(
         f"/executions/{execution_id}/consumptions",
         json={"product_id": product_id, "quantity": "2.00", "unit_price": "25.50"},

@@ -1027,6 +1027,8 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
         "service_consumptions",
         "charges",
         "payments",
+        # PF7 — inventory ledger (T1).
+        "inventory_movements",
     }
     assert {row[1] for row in rows} == {"NO"}
     # Practitioner and Principal stay global: no tenant column at all, they

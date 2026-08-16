@@ -32,23 +32,26 @@ def list_locations_route(
 
 @router.post("/locations", response_model=LocationRead, status_code=201)
 def create_location_route(
-    payload: LocationCreate, db: Session = Depends(get_db)
+    payload: LocationCreate, request: Request, db: Session = Depends(get_db)
 ) -> LocationRead:
-    return create_location(db, payload)
+    ctx = resolve_http_context(request)
+    return create_location(db, payload, ctx=ctx)
 
 
 @router.post("/practitioners", response_model=PractitionerRead, status_code=201)
 def create_practitioner_route(
-    payload: PractitionerCreate, db: Session = Depends(get_db)
+    payload: PractitionerCreate, request: Request, db: Session = Depends(get_db)
 ) -> PractitionerRead:
-    return create_practitioner(db, payload)
+    ctx = resolve_http_context(request)
+    return create_practitioner(db, payload, ctx=ctx)
 
 
 @router.post("/capabilities", response_model=CapabilityRead, status_code=201)
 def create_capability_route(
-    payload: CapabilityCreate, db: Session = Depends(get_db)
+    payload: CapabilityCreate, request: Request, db: Session = Depends(get_db)
 ) -> CapabilityRead:
-    return create_capability(db, payload)
+    ctx = resolve_http_context(request)
+    return create_capability(db, payload, ctx=ctx)
 
 
 @router.get("/practitioners/eligible", response_model=list[PractitionerRead])

@@ -58,3 +58,21 @@
   (PR7) — runtime organizations are immediately operable.
 - Frontend (separate repo): Patients screen integrated with the real clinical
   API (list/create via OpenAPI types, loading/error states).
+
+## Inventory Ledger + PF Closure — PF7 (2026-08-16)
+
+- Added `app/inventory/` (migration 0007): append-only `inventory_movements`
+  ledger (ENTRADA/SALIDA/ADJUSTMENT with per-type CHECKs; reason-required
+  adjustments) and the derived read-time `InventoryBalance` — no stock column,
+  no trigger cache, one authoritative mutation path.
+- Consumption now emits its SALIDA movement in the same transaction (1:1 via
+  `id_consumo_origen UNIQUE` + a DB trigger enforcing product causality), with
+  the negative-balance guard (product row lock + ledger sum) proven under
+  concurrency.
+- New endpoints: `POST /products/{id}/entries`, `POST /products/{id}/adjustments`,
+  `GET /products/{id}/movements`, `GET /products/{id}/balance` (PF4-idempotent
+  creates, `movements.read/create` permissions).
+- PF closure: every remaining mutating service (lead, service, location,
+  practitioner, membership, capability, availability rule/block) is now
+  ctx-gated permission-checked; BLOCKER-2 resolved (lead creation is
+  org-wide-only, E5).

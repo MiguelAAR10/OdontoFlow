@@ -8,7 +8,12 @@ from app.catalog.models import Service
 from app.context import default_context
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
-from app.iam.permissions import LOCATIONS_READ
+from app.iam.permissions import (
+    CAPABILITIES_MANAGE,
+    LOCATIONS_MANAGE,
+    LOCATIONS_READ,
+    PRACTITIONERS_MANAGE,
+)
 from app.iam.service import provision_system_access, require_permission
 from app.organization.models import (
     Location,
@@ -120,9 +125,15 @@ def list_locations(
 
 
 def create_location(
-    session: Session, data: LocationCreate, organization_id: int | None = None
+    session: Session,
+    data: LocationCreate,
+    organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
 ) -> Location:
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(session, resolved, LOCATIONS_MANAGE)
     _validate_timezone(data.timezone)
     location = Location(
         organization_id=org_id, name=data.name, timezone=data.timezone, is_active=True
@@ -134,14 +145,20 @@ def create_location(
 
 
 def create_practitioner(
-    session: Session, data: PractitionerCreate, organization_id: int | None = None
+    session: Session,
+    data: PractitionerCreate,
+    organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
 ) -> Practitioner:
     """Register a global practitioner identity and onboard it into one org.
 
     The ``practitioners`` row stays global (P4/T2); the membership row is what
     makes the professional usable inside the acting organization (PM2).
     """
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(session, resolved, PRACTITIONERS_MANAGE)
     practitioner = Practitioner(display_name=data.display_name, is_active=data.is_active)
     session.add(practitioner)
     session.flush()
@@ -156,13 +173,24 @@ def create_practitioner(
 
 
 def add_practitioner_membership(
-    session: Session, practitioner_id: int, organization_id: int
+    session: Session,
+    practitioner_id: int,
+    organization_id: int,
+    ctx: ExecutionContext | None = None,
 ) -> PractitionerMembership:
-    """Grant an existing global practitioner access to a second organization."""
+    """Grant an existing global practitioner access to a second organization.
+
+    A membership is an organization-wide authority grant, so the permission
+    check is org-wide (only an org-wide grant satisfies it, E5).
+    """
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(session, resolved, PRACTITIONERS_MANAGE, location_id=None)
     if session.get(Practitioner, practitioner_id) is None:
         raise AppError(ErrorCode.NOT_FOUND, "Practitioner not found.")
     membership = PractitionerMembership(
-        organization_id=organization_id, practitioner_id=practitioner_id, is_active=True
+        organization_id=org_id, practitioner_id=practitioner_id, is_active=True
     )
     session.add(membership)
     session.commit()
@@ -171,16 +199,25 @@ def add_practitioner_membership(
 
 
 def create_capability(
-    session: Session, data: CapabilityCreate, organization_id: int | None = None
+    session: Session,
+    data: CapabilityCreate,
+    organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
 ) -> PractitionerCapability:
     """Declare that a member practitioner performs a service at a location.
 
     Every reference is resolved inside the acting organization, so a capability
     can never mix tenant resources. The composite FKs
     ``fk_capabilities_organization_{membership,service,location}`` are the final
-    authority (§7.2).
+    authority (§7.2). The permission is checked against the capability's own
+    location (location-scoped grants honored, F-4).
     """
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(
+            session, resolved, CAPABILITIES_MANAGE, location_id=data.location_id
+        )
     load_membership(session, data.practitioner_id, org_id)
     _load_scoped(session, Service, data.service_id, org_id, "Service")
     _load_scoped(session, Location, data.location_id, org_id, "Location")

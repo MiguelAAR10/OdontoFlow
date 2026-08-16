@@ -32,11 +32,21 @@ from app.scheduling.models import (
     AvailabilityRule,
     ScheduleBlock,
 )
+from app.context import default_context
+from app.iam.context import ExecutionContext
+from app.iam.permissions import AVAILABILITY_MANAGE
+from app.iam.service import require_permission
 from app.scheduling.schemas import (
     AvailabilityRuleCreate,
     ScheduleBlockCreate,
 )
 from app.tenancy import resolve_organization_id, scoped
+
+
+def _resolved_context(
+    ctx: ExecutionContext | None, organization_id: int | None
+) -> ExecutionContext:
+    return ctx if ctx is not None else default_context(organization_id)
 
 CONFIRMED = "confirmed"
 
@@ -72,9 +82,17 @@ def _is_aware(value: datetime) -> bool:
 
 
 def create_availability_rule(
-    session: Session, data: AvailabilityRuleCreate, organization_id: int | None = None
+    session: Session,
+    data: AvailabilityRuleCreate,
+    organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
 ) -> AvailabilityRule:
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(
+            session, resolved, AVAILABILITY_MANAGE, location_id=data.location_id
+        )
     _load_active_member(session, data.practitioner_id, org_id)
     _load_active_scoped(session, Location, data.location_id, org_id, "Location")
     if data.end_local <= data.start_local:
@@ -96,9 +114,17 @@ def create_availability_rule(
 
 
 def create_schedule_block(
-    session: Session, data: ScheduleBlockCreate, organization_id: int | None = None
+    session: Session,
+    data: ScheduleBlockCreate,
+    organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
 ) -> ScheduleBlock:
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(
+            session, resolved, AVAILABILITY_MANAGE, location_id=data.location_id
+        )
     _load_active_member(session, data.practitioner_id, org_id)
     _load_active_scoped(session, Location, data.location_id, org_id, "Location")
     if not _is_aware(data.start_utc) or not _is_aware(data.end_utc):

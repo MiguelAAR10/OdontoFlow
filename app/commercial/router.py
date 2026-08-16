@@ -24,9 +24,10 @@ def list_leads_route(
 
 @router.post("/leads", response_model=LeadRead, status_code=201)
 def create_lead_route(
-    payload: LeadCreate, db: Session = Depends(get_db)
+    payload: LeadCreate, request: Request, db: Session = Depends(get_db)
 ) -> LeadRead:
-    return create_lead(db, payload)
+    ctx = resolve_http_context(request)
+    return create_lead(db, payload, ctx=ctx)
 
 
 @router.get("/leads/{lead_id}", response_model=LeadRead)
