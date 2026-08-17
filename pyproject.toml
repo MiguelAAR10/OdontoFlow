@@ -1,7 +1,7 @@
 [project]
 name = "odontoflow"
 version = "0.1.0"
-description = "Agent-native clinic operations platform — Lead-to-Appointment vertical"
+description = "Agent-native clinic operations platform — CRM, scheduling, clinical, economics, multi-location inventory"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

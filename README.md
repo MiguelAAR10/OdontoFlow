@@ -130,14 +130,14 @@ code.
 
 ## Running locally
 
-Requirements: Docker (Compose), Python 3.12, git.
+Requirements: Docker (Compose), Python 3.12 (see `.python-version`), git.
 
 ```bash
 # 1. PostgreSQL (host port 5434 — keeps other projects untouched)
 docker compose up -d db
 
-# 2. Environment
-python3 -m venv .venv
+# 2. Environment (isolated venv; pyproject.toml is the single source of truth)
+python3.12 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 cp .env.example .env   # adjust DATABASE_URL if needed
 
@@ -148,6 +148,11 @@ cp .env.example .env   # adjust DATABASE_URL if needed
 .venv/bin/uvicorn app:app --reload --port 8000
 # → http://127.0.0.1:8000/docs   ·   http://127.0.0.1:8000/openapi.json
 ```
+
+> Dependencies are declared in `pyproject.toml` (PEP 621), never `requirements.txt`. To add one, edit
+> `pyproject.toml` and reinstall the editable; the `.venv` must be reproducible from scratch:
+> `rm -rf .venv && python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"`. Full environment
+> reference: [`ENVIRONMENT.md`](../../ENVIRONMENT.md).
 
 > The test database `odontoflow_test` is created automatically by the test suite on port 5434. Ports 5432/5433 belong to other projects and are never touched.
 
