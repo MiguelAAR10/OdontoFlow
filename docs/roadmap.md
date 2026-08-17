@@ -33,36 +33,40 @@ that order and what each NEXT/LATER item actually depends on.
   overpayment rejection via row lock); 20 economic tests; runtime `create_organization` now provisions
   system access atomically (PR7 gap fix).
 
-## NOW
+## DONE (continued)
 
-- **Agenda ↔ Scheduling vertical** (frontend) — shipped read endpoints consumed by the real frontend adapter
-  (booking/reschedule/cancel with `Idempotency-Key`); remaining screens (Pacientes→Leads, Caja, Inventario,
-  Chat, Agente) stay MOCK/PROTOTYPE until their domain authority exists.
-
+- **Clinical core** (PF5) — Patient, Visit, ServiceExecution; visit-origin rule (appointment-origin with
+  derived practitioner/location, walk-in XOR), confirmed-only attendance. Closed at the clinical commit.
+- **Economic core** (PF6) — ServiceConsumption (emits the SALIDA), Charge, Payment; paid/outstanding
+  derived; overpayment rejected. Closed at the economic commit.
 - **Inventory ledger** (PF7) — append-only `InventoryMovement` (ENTRADA/SALIDA/ADJUSTMENT with per-type
   CHECKs and reason-required corrections), derived read-time `InventoryBalance` (no stock column, no trigger
   cache), consumption→SALIDA 1:1 in the same transaction with a DB trigger for product causality, and the
-  negative-balance guard via product row lock + ledger sum. Closed at the inventory commit.
+  negative-balance guard via product row lock + ledger sum.
 - **PF closure** — every remaining mutating service (leads, services, locations, practitioners, capabilities,
   memberships, availability rules/blocks) is now ctx-gated permission-checked; BLOCKER-2 resolved (lead
   creation requires an org-wide grant); runtime `create_organization` provisions system access atomically.
+- **M4.2 Location-aware inventory** — `location_id` (composite FK) on every movement, balances per
+  Product × Location, entries/adjustments target a location, consumption draws stock at the
+  Visit/ServiceExecution location, and **atomic transfers** (TRANSFER_OUT/IN pair, shared `transfer_id`,
+  one transaction, exactly-one-Out/In partial indexes, COMMIT-time pair trigger, PF4-idempotent, audited).
+  Migration `0008` (backfill derives truthful locations and fails loudly rather than fabricate). 384 tests.
+- **M4 Pilot Fit (frontend)** — Agenda, Patients, Cash and Inventory screens REAL against this contract;
+  full no-mock pilot E2E proven in the frontend repo (`test/pilot-e2e.test.ts`).
 
-## NEXT
+## NOW — M5 First Measured Value
 
-- **Platform Foundation closure.** Remaining `architecture.md` §9 items (review any stragglers).
-- **Sale stock-out** for `kind='reventa'` products (movement exists; invoice linkage deferred).
-- **Finance follow-ups** (deferred): payment reversal, method catalog, Invoice/discount engine.
-- **Multi-location stock & transfers** (additive later: `location_id` + TRANSFER type).
+Observe → detect economic leakage → intervene → measure outcome → estimate economic effect → measure
+delivery/human cost. Not a planning/architecture/Foundation/migration phase. Planned direction, not
+implemented capability.
 
 ## LATER
 
-- **Finance** — `Charge`, `Payment` attached to a `ServiceExecution`.
-- **Inventory / Operations** — ledger-based stock (`Product`, immutable `StockMovement`, derived
-  `StockBalance`), consumption tied to a real service execution — never a direct mutable-stock decrement.
+- **Platform Foundation stragglers** — remaining `architecture.md` §9 items (review any stragglers;
+  authentication is the standing gap).
+- **Finance follow-ups** — payment reversal, method catalog, invoice/discount engine, sale stock-out for
+  `kind='reventa'` products.
 - **External adapters** — Calendar sync, WhatsApp, billing/invoicing (e.g. NubeFact) as adapters around the
   domain, never as domain authorities.
 - **Operational optimization / agent execution** — agents as `Principal`s calling the same deterministic
   tools a human uses; the optimization/world-model layer itself is explicitly not designed anywhere yet.
-
-Everything under NEXT and LATER is **planned direction, not implemented capability** — see
-[`product-vision.md`](product-vision.md).
