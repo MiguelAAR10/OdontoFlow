@@ -31,5 +31,8 @@ def create_lead_route(
 
 
 @router.get("/leads/{lead_id}", response_model=LeadRead)
-def get_lead_route(lead_id: int, db: Session = Depends(get_db)) -> LeadRead:
-    return get_lead(db, lead_id)
+def get_lead_route(
+    lead_id: int, request: Request, db: Session = Depends(get_db)
+) -> LeadRead:
+    ctx = resolve_http_context(request)
+    return get_lead(db, lead_id, organization_id=ctx.organization_id)

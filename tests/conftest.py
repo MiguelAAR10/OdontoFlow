@@ -15,6 +15,7 @@ from app.iam.models import (
     SYSTEM_ROLE_CODE,
     SYSTEM_ROLE_NAME,
 )
+from app.iam.credentials import hash_secret
 from app.tenancy import BOOTSTRAP_ORGANIZATION_ID, BOOTSTRAP_ORGANIZATION_NAME
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +68,12 @@ def migrated_engine():
     _reset_schema(TEST_DATABASE_URL)
     _upgrade(TEST_DATABASE_URL)
     engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    # ``clean_tables`` reseeds *after* each test, so without this the first test
+    # of a session would run against a freshly migrated schema that has no
+    # credential — and now that identity is authenticated rather than assumed,
+    # that means a 401 instead of a result.
+    with engine.begin() as conn:
+        _seed_test_integration(conn)
     yield engine
     engine.dispose()
 
@@ -82,6 +89,7 @@ def clean_tables(migrated_engine):
             )
         }
         tables = (
+            "integration_credentials",
             "command_receipts",
             "inventory_movements",
             "payments",
@@ -119,6 +127,8 @@ def clean_tables(migrated_engine):
             _seed_bootstrap_organization(conn)
         if "principals" in present:
             _seed_system_principal(conn)
+        if "integration_credentials" in present:
+            _seed_test_integration(conn)
 
 
 def _seed_bootstrap_organization(conn) -> None:
@@ -190,6 +200,77 @@ def _seed_system_principal(conn) -> None:
             "WHERE m.principal_id = :principal"
         ),
         {"code": SYSTEM_ROLE_CODE, "principal": SYSTEM_PRINCIPAL_ID},
+    )
+
+
+#: A deterministic credential every API test authenticates with. Tests exercise
+#: the same door real callers use; only its token is fixed so fixtures stay
+#: reproducible. Anonymous access is covered by ``tests/test_authentication.py``.
+#:
+#: The principal is ``human`` on purpose. ``agent`` and ``integration`` must send
+#: an ``Idempotency-Key`` on every mutation (PF4), which is the rule the agent
+#: plan depends on; typing this one as an integration would have forced a key
+#: into 150 unrelated fixtures and diluted that guarantee instead of testing it.
+#: ``tests/test_authentication.py`` creates integration principals explicitly.
+TEST_INTEGRATION_PREFIX = "testtest"
+TEST_INTEGRATION_SECRET = "integration-secret-for-tests"
+TEST_INTEGRATION_TOKEN = f"ofk_{TEST_INTEGRATION_PREFIX}_{TEST_INTEGRATION_SECRET}"
+TEST_INTEGRATION_ROLE_CODE = "test-operator"
+AUTH_HEADERS = {"Authorization": f"Bearer {TEST_INTEGRATION_TOKEN}"}
+
+
+def _seed_test_integration(conn) -> None:
+    """An ``integration`` principal with the full catalog in the bootstrap org.
+
+    Mirrors what ``_seed_system_principal`` does, but for a principal that is
+    reachable over HTTP. ``system`` deliberately is not.
+    """
+    principal_id = conn.execute(
+        text(
+            "INSERT INTO principals (type, display_name) "
+            "VALUES ('human', 'test-operator') RETURNING id"
+        )
+    ).scalar_one()
+    role_id = conn.execute(
+        text(
+            "INSERT INTO roles (organization_id, code, name) "
+            "VALUES (:org, :code, :code) RETURNING id"
+        ),
+        {"org": BOOTSTRAP_ORGANIZATION_ID, "code": TEST_INTEGRATION_ROLE_CODE},
+    ).scalar_one()
+    conn.execute(
+        text(
+            "INSERT INTO role_permissions (role_id, permission_id) "
+            "SELECT :role, p.id FROM permissions p"
+        ),
+        {"role": role_id},
+    )
+    membership_id = conn.execute(
+        text(
+            "INSERT INTO memberships (organization_id, principal_id) "
+            "VALUES (:org, :principal) RETURNING id"
+        ),
+        {"org": BOOTSTRAP_ORGANIZATION_ID, "principal": principal_id},
+    ).scalar_one()
+    conn.execute(
+        text(
+            "INSERT INTO role_assignments (organization_id, membership_id, role_id) "
+            "VALUES (:org, :membership, :role)"
+        ),
+        {"org": BOOTSTRAP_ORGANIZATION_ID, "membership": membership_id, "role": role_id},
+    )
+    conn.execute(
+        text(
+            "INSERT INTO integration_credentials "
+            "(organization_id, principal_id, name, prefix, secret_hash) "
+            "VALUES (:org, :principal, 'test-operator', :prefix, :hash)"
+        ),
+        {
+            "org": BOOTSTRAP_ORGANIZATION_ID,
+            "principal": principal_id,
+            "prefix": TEST_INTEGRATION_PREFIX,
+            "hash": hash_secret(TEST_INTEGRATION_SECRET),
+        },
     )
 
 

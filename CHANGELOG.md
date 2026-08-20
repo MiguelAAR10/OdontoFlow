@@ -1,5 +1,43 @@
 # OdontoFlow Changelog
 
+## PF5 — HTTP Authentication (2026-08-20)
+
+- **The transport now proves who it is.** `resolve_http_context` returned
+  constants, so every anonymous request resolved to the seeded `system`
+  principal — which migration `0003` grants the whole 33-permission catalog.
+  Measured before the change: `GET /services|/locations|/patients|/leads|
+  /products|/appointments` all answered `200` with no credential, and mutations
+  answered `422` (body validation) rather than `401`.
+- Migration `0009`: `integration_credentials` — revocable secrets bound to a
+  principal inside one organization. Only the SHA-256 digest of a 256-bit
+  random secret is stored; the clear-text `prefix` is a lookup handle, not a
+  secret. A composite FK into `memberships(organization_id, principal_id)`
+  means a credential can never name a principal that is not already a member:
+  it proves *who*, never *what*.
+- `app/iam/credentials.py`: token issue/parse/verify. Every rejection path —
+  absent, malformed, unknown, revoked, expired, inactive principal — returns
+  the identical `401 AUTHENTICATION_REQUIRED` envelope, so responses cannot be
+  used to enumerate valid prefixes. Raised with an explicit `http_status`, so
+  the approved six-code envelope in `app/errors.py` is untouched (same pattern
+  `PERMISSION_DENIED`/403 already uses).
+- **One gate, applied at the router level.** `require_authenticated_context` is
+  a dependency on all seven business routers in `create_app`; `/health` stays
+  open for monitoring. This closed a second hole: `GET /services`,
+  `GET /leads/{id}`, `GET /practitioners/eligible` and `POST /slots/query`
+  resolved no context at all — they were unauthenticated *and* unauthorized,
+  and being the first four tools the agent plan exposes, they also silently
+  read organization 1 for every caller. They now pass the authenticated
+  organization down, which the new cross-tenant test proves.
+- Authentication uses its **own short-lived session**, never the request
+  session: invariant 4 forbids pre-transaction queries on the session a service
+  will `session.begin()` on.
+- `scripts/issue_credential.py`: issue, list and revoke. The token is printed
+  once and is unrecoverable by design.
+- `tests/test_authentication.py`: 19 negative tests. Reverting the feature turns
+  them red — a suite that only walks the happy path cannot detect an
+  authentication regression.
+- Full suite: **403 passed** (was 384).
+
 ## M4.2 — Location-Aware Inventory (2026-08-16)
 
 - Migration `0008`: `inventory_movements` gains `location_id` (NOT NULL,

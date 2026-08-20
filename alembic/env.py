@@ -12,6 +12,7 @@ from app import scheduling  # noqa: F401  (register scheduling models)
 from app.audit.models import AuditEvent  # noqa: F401
 from app.catalog.models import Service  # noqa: F401
 from app.commercial.models import Lead  # noqa: F401
+from app.iam.credentials import IntegrationCredential  # noqa: F401
 from app.iam.models import (  # noqa: F401
     Membership,
     Permission,

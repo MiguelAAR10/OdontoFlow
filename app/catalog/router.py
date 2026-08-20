@@ -18,5 +18,10 @@ def create_service_route(
 
 
 @router.get("/services", response_model=list[ServiceRead])
-def list_services_route(db: Session = Depends(get_db)) -> list[ServiceRead]:
-    return list_services(db)
+def list_services_route(
+    request: Request, db: Session = Depends(get_db)
+) -> list[ServiceRead]:
+    # The tenant comes from the authenticated context. Omitting it fell back to
+    # the bootstrap organization, so any credential read organization 1.
+    ctx = resolve_http_context(request)
+    return list_services(db, organization_id=ctx.organization_id)

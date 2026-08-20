@@ -19,6 +19,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
+from conftest import AUTH_HEADERS
 from app import create_app
 from app.audit.models import AuditEvent
 from app.catalog.models import Service
@@ -790,7 +791,9 @@ def test_cross_organization_conflict_leaks_nothing_through_http(session, migrate
             db.close()
 
     app.dependency_overrides[get_db] = _db
-    client = TestClient(app, raise_server_exceptions=False)
+
+    app.state.auth_sessionmaker = maker
+    client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
     response = client.post(
         "/appointments",
@@ -1003,6 +1006,7 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
     ).all()
     session.rollback()
     assert {row[0] for row in rows} == {
+        "integration_credentials",
         "appointments",
         "audit_events",
         "availability_rules",

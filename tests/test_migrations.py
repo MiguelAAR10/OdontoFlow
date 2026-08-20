@@ -32,6 +32,7 @@ EXPECTED_TABLES = {
     "charges",
     "payments",
     # PF7 — inventory ledger (migration 0007).
+    "integration_credentials",
     "inventory_movements",
     "services",
     "locations",
@@ -44,7 +45,7 @@ EXPECTED_TABLES = {
     "audit_events",
 }
 
-HEAD_REVISION = "0008"
+HEAD_REVISION = "0009"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (

@@ -45,6 +45,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import sessionmaker
 
+from conftest import AUTH_HEADERS
 from app import create_app
 from app.audit.models import AuditEvent
 from app.catalog.models import Service
@@ -436,7 +437,9 @@ def test_booking_replay_via_http_returns_original_outcome_and_replay_header(
             db.close()
 
     app.dependency_overrides[get_db] = _db
-    client = TestClient(app, raise_server_exceptions=False)
+
+    app.state.auth_sessionmaker = maker
+    client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
     headers = {"Idempotency-Key": KEY_BOOK}
     payload = book_payload(ids, utc_of(9))
     payload["start"] = payload["start"].isoformat()
@@ -600,7 +603,9 @@ def test_same_key_different_fingerprint_via_http_is_409_idempotency_key_reused(
             db.close()
 
     app.dependency_overrides[get_db] = _db
-    client = TestClient(app, raise_server_exceptions=False)
+
+    app.state.auth_sessionmaker = maker
+    client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
     headers = {"Idempotency-Key": KEY_BOOK}
 
     def book(start):
@@ -923,6 +928,8 @@ def test_40p01_retry_reclaims_cleanly(migrated_engine, session):
 
     app.dependency_overrides[get_db] = _db
 
+    app.state.auth_sessionmaker = maker
+
     calls = []
     real_operation = book_appointment
 
@@ -935,7 +942,7 @@ def test_40p01_retry_reclaims_cleanly(migrated_engine, session):
     from app.scheduling.router import get_booking_operation
 
     app.dependency_overrides[get_booking_operation] = lambda: fake_op
-    client = TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
     payload = book_payload(ids, utc_of(9))
     payload["start"] = payload["start"].isoformat()
 
