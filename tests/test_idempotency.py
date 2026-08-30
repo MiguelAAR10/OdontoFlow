@@ -36,6 +36,7 @@ Proven semantics:
 from __future__ import annotations
 
 import threading
+import uuid
 from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
@@ -897,6 +898,56 @@ def test_agent_principal_without_key_rejected_before_mutation(session):
     assert exc.value.code == ErrorCode.INVALID_INPUT
     assert count_of(session, Appointment) == 0
     assert len(receipt_rows(session, operation=OP_APPOINTMENTS_BOOK)) == 0
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        "derived-from-business-data",
+        str(uuid.uuid1()),
+        str(uuid.uuid4()).upper(),
+        "00000000-0000-4000-8000-000000000000-extra",
+    ),
+)
+def test_agent_principal_requires_a_uuid4_idempotency_key(session, key):
+    ids = seed_booking(session)
+    (agent, _) = seed_actor(session, principal_type="agent", codes=(APPOINTMENTS_CREATE,))
+    payload = book_payload(ids, utc_of(9))
+
+    with pytest.raises(AppError) as exc:
+        run_idempotent_command(
+            session,
+            operation=book_appointment,
+            operation_name=OP_APPOINTMENTS_BOOK,
+            key=key,
+            ctx=ctx_for(agent, "agent", ORG),
+            params=payload,
+            **payload,
+        )
+
+    assert exc.value.code == ErrorCode.INVALID_INPUT
+    assert count_of(session, Appointment) == 0
+    assert len(receipt_rows(session, operation=OP_APPOINTMENTS_BOOK)) == 0
+
+
+def test_agent_principal_accepts_a_uuid4_idempotency_key(session):
+    ids = seed_booking(session)
+    (agent, _) = seed_actor(session, principal_type="agent", codes=(APPOINTMENTS_CREATE,))
+    payload = book_payload(ids, utc_of(9))
+
+    result = run_idempotent_command(
+        session,
+        operation=book_appointment,
+        operation_name=OP_APPOINTMENTS_BOOK,
+        key=str(uuid.uuid4()),
+        ctx=ctx_for(agent, "agent", ORG),
+        params=payload,
+        **payload,
+    )
+
+    assert result.replayed is False
+    assert count_of(session, Appointment) == 1
+    assert len(receipt_rows(session, operation=OP_APPOINTMENTS_BOOK)) == 1
 
 
 # --- C8: the booking 40P01 retry re-claims cleanly ---------------------------

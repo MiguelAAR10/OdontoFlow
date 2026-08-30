@@ -33,6 +33,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import NamedTuple
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -63,6 +64,17 @@ KEY_REQUIRED_PRINCIPAL_TYPES = ("agent", "integration")
 IDEMPOTENCY_KEY_REUSED_MESSAGE = (
     "The idempotency key was already used by a different request."
 )
+IDEMPOTENCY_KEY_FORMAT_MESSAGE = (
+    "Agent and integration idempotency keys must be canonical UUIDv4 values."
+)
+
+
+def _is_canonical_uuid4(value: str) -> bool:
+    try:
+        parsed = UUID(value)
+    except (ValueError, AttributeError):
+        return False
+    return parsed.version == 4 and str(parsed) == value
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +267,12 @@ def run_idempotent_command(
             ErrorCode.INVALID_INPUT,
             "An idempotency key is required for agent and integration principals.",
         )
+    if (
+        ctx.principal_type in KEY_REQUIRED_PRINCIPAL_TYPES
+        and key is not None
+        and not _is_canonical_uuid4(key)
+    ):
+        raise AppError(ErrorCode.INVALID_INPUT, IDEMPOTENCY_KEY_FORMAT_MESSAGE)
     if key is None:
         return CommandOutcome(result=operation(session, ctx=ctx, **service_kwargs))
     fingerprint = command_fingerprint(

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 from sqlalchemy import (
@@ -38,12 +38,16 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
+    Index,
+    Integer,
     String,
     UniqueConstraint,
+    delete,
     func,
     select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db import Base
 from app.errors import AppError
@@ -118,6 +122,7 @@ class IntegrationCredential(Base):
     __table_args__ = (
         UniqueConstraint("prefix", name="uq_integration_credentials_prefix"),
         CheckConstraint("length(secret_hash) = 64", name="ck_integration_credentials_hash_len"),
+        Index("ix_integration_credentials_organization", "organization_id"),
         # The credential may only name a principal that already belongs to the
         # organization: authority still comes from the membership, never from
         # the credential row (PF0 §7.1).
@@ -126,6 +131,42 @@ class IntegrationCredential(Base):
             ["memberships.organization_id", "memberships.principal_id"],
             ondelete="RESTRICT",
             name="fk_integration_credentials_membership",
+        ),
+    )
+
+
+class IntegrationRateLimit(Base):
+    """PostgreSQL-backed fixed-window counter shared by every API worker."""
+
+    __tablename__ = "integration_rate_limits"
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    credential_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "integration_credentials.id",
+            ondelete="RESTRICT",
+            name="fk_integration_rate_limits_credential",
+        ),
+        nullable=False,
+    )
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "credential_id",
+            "window_start",
+            "category",
+            name="uq_integration_rate_limits_window",
+        ),
+        CheckConstraint(
+            "category IN ('read', 'mutation')",
+            name="ck_integration_rate_limits_category",
+        ),
+        CheckConstraint(
+            "request_count > 0",
+            name="ck_integration_rate_limits_positive_count",
         ),
     )
 
@@ -196,6 +237,46 @@ def revoke_credential(session: Session, credential_id: int) -> None:
     if credential is not None:
         credential.revoked_at = datetime.now(UTC)
         session.flush()
+
+
+def claim_rate_limit(
+    session: Session,
+    *,
+    credential_id: int,
+    category: str,
+    limit: int,
+    now: datetime | None = None,
+) -> tuple[bool, int]:
+    """Atomically claim one fixed-window request in PostgreSQL."""
+    instant = now or datetime.now(UTC)
+    window_start = instant.replace(second=0, microsecond=0)
+    # Keep only the current and immediately previous windows. This cleanup is
+    # scoped to the authenticated credential, so it neither contends on nor
+    # scans the counters of other tenants.
+    session.execute(
+        delete(IntegrationRateLimit).where(
+            IntegrationRateLimit.credential_id == credential_id,
+            IntegrationRateLimit.window_start < window_start - timedelta(minutes=1),
+        )
+    )
+    statement = (
+        pg_insert(IntegrationRateLimit)
+        .values(
+            credential_id=credential_id,
+            window_start=window_start,
+            category=category,
+            request_count=1,
+        )
+        .on_conflict_do_update(
+            constraint="uq_integration_rate_limits_window",
+            set_={"request_count": IntegrationRateLimit.request_count + 1},
+            where=IntegrationRateLimit.request_count < limit,
+        )
+        .returning(IntegrationRateLimit.request_count)
+    )
+    count = session.scalar(statement)
+    retry_after = max(1, 60 - instant.second)
+    return count is not None, retry_after
 
 
 def authenticate(session: Session, token: str | None) -> IntegrationCredential:

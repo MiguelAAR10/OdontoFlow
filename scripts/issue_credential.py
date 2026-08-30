@@ -3,7 +3,7 @@
 Authentication is worthless without a way to hand out and take back keys, so
 this is part of the same change rather than a follow-up.
 
-    python scripts/issue_credential.py issue --name n8n-inbound --type integration
+    python scripts/issue_credential.py issue --name n8n-inbound --profile n8n-inbound
     python scripts/issue_credential.py list
     python scripts/issue_credential.py revoke --id 3
 
@@ -13,8 +13,8 @@ one; there is deliberately no way to recover it.
 
 A credential can only name a principal that already belongs to the
 organization, because the row carries a composite foreign key into
-``memberships``. Authority still comes from role assignments: this only proves
-*who* is calling, never *what* they may do.
+``memberships``. Each issued credential must select one least-privilege
+profile; the script reconciles that profile's role to its exact permission set.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import delete, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db import SessionLocal  # noqa: E402
@@ -35,11 +35,54 @@ from app.iam.credentials import (  # noqa: E402
     issue_credential,
     revoke_credential,
 )
-from app.iam.models import Membership, Principal, PRINCIPAL_TYPES  # noqa: E402
+from app.iam.models import (  # noqa: E402
+    Membership,
+    Permission,
+    Principal,
+    PRINCIPAL_TYPES,
+    Role,
+    RoleAssignment,
+    RolePermission,
+)
+from app.iam.permissions import (  # noqa: E402
+    AVAILABILITY_READ,
+    CONTACT_APPOINTMENTS_BOOK,
+    CONTACT_APPOINTMENTS_CANCEL,
+    CONTACT_APPOINTMENTS_READ,
+    CONTACT_APPOINTMENTS_RESCHEDULE,
+    CONTACT_PROFILES_MANAGE,
+    CONVERSATIONS_MANAGE,
+    CONVERSATIONS_READ,
+    DELIVERIES_CREATE,
+    DELIVERIES_MANAGE,
+    MESSAGES_CREATE,
+    LOCATIONS_READ,
+    PRACTITIONERS_READ,
+    SERVICES_READ,
+)
 from app.tenancy import BOOTSTRAP_ORGANIZATION_ID  # noqa: E402
 
 UTC = timezone.utc
-ISSUABLE_TYPES = ("integration", "agent", "human")
+ISSUABLE_TYPES = ("integration", "agent")
+PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
+    "connectivity": (SERVICES_READ,),
+    "n8n-inbound": (MESSAGES_CREATE,),
+    "conversation-agent": (
+        CONVERSATIONS_READ,
+        DELIVERIES_CREATE,
+        SERVICES_READ,
+        LOCATIONS_READ,
+        PRACTITIONERS_READ,
+        AVAILABILITY_READ,
+        CONTACT_APPOINTMENTS_READ,
+        CONTACT_APPOINTMENTS_BOOK,
+        CONTACT_APPOINTMENTS_CANCEL,
+        CONTACT_APPOINTMENTS_RESCHEDULE,
+        CONTACT_PROFILES_MANAGE,
+        CONVERSATIONS_MANAGE,
+    ),
+    "outbound-dispatcher": (DELIVERIES_MANAGE,),
+}
 
 
 def _resolve_principal(
@@ -87,6 +130,90 @@ def _resolve_principal(
     return principal
 
 
+def _assign_profile(
+    session: Session,
+    *,
+    organization_id: int,
+    principal_id: int,
+    profile: str,
+) -> None:
+    """Assign one organization-wide role whose permissions exactly match a profile."""
+    permission_codes = PROFILE_PERMISSIONS[profile]
+    permissions = session.scalars(
+        select(Permission).where(Permission.code.in_(permission_codes))
+    ).all()
+    found_codes = {permission.code for permission in permissions}
+    missing = set(permission_codes) - found_codes
+    if missing:
+        raise RuntimeError(
+            "Run the latest Alembic migrations before issuing this profile; "
+            f"missing permissions: {', '.join(sorted(missing))}."
+        )
+
+    role_code = f"integration-{profile}"
+    role = session.scalar(
+        select(Role).where(
+            Role.organization_id == organization_id,
+            Role.code == role_code,
+        )
+    )
+    if role is None:
+        role = Role(
+            organization_id=organization_id,
+            code=role_code,
+            name=f"Integration: {profile}",
+        )
+        session.add(role)
+        session.flush()
+
+    session.execute(delete(RolePermission).where(RolePermission.role_id == role.id))
+    session.add_all(
+        RolePermission(role_id=role.id, permission_id=permission.id)
+        for permission in permissions
+    )
+
+    membership = session.scalar(
+        select(Membership).where(
+            Membership.organization_id == organization_id,
+            Membership.principal_id == principal_id,
+        )
+    )
+    assert membership is not None
+    other_assignment = session.scalar(
+        select(RoleAssignment)
+        .join(Role, Role.id == RoleAssignment.role_id)
+        .where(
+            RoleAssignment.organization_id == organization_id,
+            RoleAssignment.membership_id == membership.id,
+            Role.code != role_code,
+        )
+        .limit(1)
+    )
+    if other_assignment is not None:
+        raise RuntimeError(
+            "This principal already has another role. Use one principal and "
+            "credential per integration responsibility."
+        )
+    assignment = session.scalar(
+        select(RoleAssignment).where(
+            RoleAssignment.organization_id == organization_id,
+            RoleAssignment.membership_id == membership.id,
+            RoleAssignment.role_id == role.id,
+            RoleAssignment.location_id.is_(None),
+        )
+    )
+    if assignment is None:
+        session.add(
+            RoleAssignment(
+                organization_id=organization_id,
+                membership_id=membership.id,
+                role_id=role.id,
+                location_id=None,
+            )
+        )
+    session.flush()
+
+
 def cmd_issue(args: argparse.Namespace) -> int:
     if args.type not in ISSUABLE_TYPES:
         print(f"--type must be one of {ISSUABLE_TYPES}; 'system' is never issuable.")
@@ -105,6 +232,12 @@ def cmd_issue(args: argparse.Namespace) -> int:
             name=args.name,
             principal_type=args.type,
         )
+        _assign_profile(
+            session,
+            organization_id=args.organization,
+            principal_id=principal.id,
+            profile=args.profile,
+        )
         credential, token = issue_credential(
             session,
             organization_id=args.organization,
@@ -118,13 +251,14 @@ def cmd_issue(args: argparse.Namespace) -> int:
         print(f"  id            {credential.id}")
         print(f"  organización  {credential.organization_id}")
         print(f"  principal     {principal.id} ({principal.type}) {principal.display_name}")
+        print(f"  perfil        {args.profile}")
         print(f"  expira        {expires_at.isoformat() if expires_at else 'nunca'}")
         print()
         print("  TOKEN (se muestra una sola vez):")
         print(f"  {token}")
         print()
         print("  Uso:  Authorization: Bearer <token>")
-        print("  El principal aún necesita un rol asignado para tener permisos.")
+        print("  El perfil ya quedó asignado con permisos mínimos.")
     return 0
 
 
@@ -178,6 +312,12 @@ def build_parser() -> argparse.ArgumentParser:
     issue = sub.add_parser("issue", parents=[common], help="Emitir una credencial nueva.")
     issue.add_argument("--name", required=True, help="Nombre del principal, p. ej. n8n-inbound.")
     issue.add_argument("--type", default="integration", help=f"Uno de {ISSUABLE_TYPES}.")
+    issue.add_argument(
+        "--profile",
+        required=True,
+        choices=tuple(PROFILE_PERMISSIONS),
+        help="Perfil de permisos mínimos para esta responsabilidad.",
+    )
     issue.add_argument("--expires-days", type=int, default=None, help="Caducidad en días.")
     issue.set_defaults(func=cmd_issue)
 

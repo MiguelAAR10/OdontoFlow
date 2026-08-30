@@ -35,4 +35,4 @@ def get_lead_route(
     lead_id: int, request: Request, db: Session = Depends(get_db)
 ) -> LeadRead:
     ctx = resolve_http_context(request)
-    return get_lead(db, lead_id, organization_id=ctx.organization_id)
+    return get_lead(db, lead_id, ctx=ctx)

@@ -7,6 +7,7 @@ from app import audit  # noqa: F401  (register audit models)
 from app import catalog  # noqa: F401  (register catalog models)
 from app import commercial  # noqa: F401  (register commercial models)
 from app import iam  # noqa: F401  (register iam models)
+from app import messaging  # noqa: F401  (register messaging models)
 from app import organization  # noqa: F401  (register organization models)
 from app import scheduling  # noqa: F401  (register scheduling models)
 from app.audit.models import AuditEvent  # noqa: F401
@@ -20,6 +21,13 @@ from app.iam.models import (  # noqa: F401
     Role,
     RoleAssignment,
     RolePermission,
+)
+from app.messaging.models import (  # noqa: F401
+    ChannelAccount,
+    ContactIdentity,
+    Conversation,
+    Message,
+    OutboundMessage,
 )
 from app.organization.models import Location, Practitioner, PractitionerCapability  # noqa: F401
 from app.scheduling.models import Appointment, AvailabilityRule, ScheduleBlock  # noqa: F401

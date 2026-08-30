@@ -193,7 +193,7 @@ def query_slots_route(
         payload.location_id,
         payload.window_start,
         payload.window_end,
-        organization_id=ctx.organization_id,
+        ctx=ctx,
     )
 
 

@@ -89,6 +89,16 @@ def clean_tables(migrated_engine):
             )
         }
         tables = (
+            "reception_handoffs",
+            "outbound_messages",
+            "messages",
+            "conversations",
+            "contact_identities",
+            "channel_accounts",
+            "appointment_proposals",
+            "appointment_reschedule_proposals",
+            "integration_rate_limits",
+            "security_events",
             "integration_credentials",
             "command_receipts",
             "inventory_movements",
@@ -113,6 +123,7 @@ def clean_tables(migrated_engine):
             "principals",
             "locations",
             "services",
+            "promotions",
             "leads",
             "organizations",
         )

@@ -18,6 +18,7 @@ GiST exclusion exactly.
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -34,7 +35,7 @@ from app.scheduling.models import (
 )
 from app.context import default_context
 from app.iam.context import ExecutionContext
-from app.iam.permissions import AVAILABILITY_MANAGE
+from app.iam.permissions import AVAILABILITY_MANAGE, AVAILABILITY_READ
 from app.iam.service import require_permission
 from app.scheduling.schemas import (
     AvailabilityRuleCreate,
@@ -49,6 +50,15 @@ def _resolved_context(
     return ctx if ctx is not None else default_context(organization_id)
 
 CONFIRMED = "confirmed"
+WEEKDAYS_ES = (
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+)
 
 
 def _load_active_scoped(
@@ -156,8 +166,14 @@ def find_available_slots(
     window_start: datetime,
     window_end: datetime,
     organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
 ) -> list[dict]:
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(
+            session, resolved, AVAILABILITY_READ, location_id=location_id
+        )
     service = _load_active_scoped(session, Service, service_id, org_id, "Service")
     location = _load_active_scoped(session, Location, location_id, org_id, "Location")
 
@@ -176,6 +192,7 @@ def find_available_slots(
     )
 
     results: list[dict] = []
+    local_timezone = ZoneInfo(location.timezone)
     for practitioner in practitioners:
         rules = list(
             session.scalars(
@@ -222,11 +239,19 @@ def find_available_slots(
             location.timezone,
         )
         for start_utc, end_utc in slots:
+            start_local = start_utc.astimezone(local_timezone)
+            end_local = end_utc.astimezone(local_timezone)
             results.append(
                 {
                     "practitioner_id": practitioner.id,
                     "start": start_utc,
                     "end": end_utc,
+                    "timezone": location.timezone,
+                    "start_local": start_local.isoformat(),
+                    "end_local": end_local.isoformat(),
+                    "date_local": start_local.date().isoformat(),
+                    "weekday_local": WEEKDAYS_ES[start_local.weekday()],
+                    "time_local": start_local.strftime("%H:%M"),
                 }
             )
 

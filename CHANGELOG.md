@@ -1,5 +1,23 @@
 # OdontoFlow Changelog
 
+## Reception foundation port (2026-08-30)
+
+- Ported the previously verified local integration foundation onto clean GitHub
+  `main` in `codex/reception-pilot`, preserving the original dirty worktree as
+  read-only evidence.
+- Added migrations `0010` through `0014`: HTTP security telemetry, durable
+  messaging/outbound delivery, the typed agent-tool gateway, contact-bound
+  booking proposals and operational reception tools.
+- Added authenticated inbound/outbound messaging, PostgreSQL-backed retries,
+  contact-bound reads and mutations, proposal/confirmation booking and
+  rescheduling, reception context/profile tools, promotions and human handoff.
+- Imported tests before implementation; collection initially failed because
+  `app.messaging` and `Promotion` did not exist. After the port, the focused
+  reception/security pack passes 55 tests.
+- This foundation is not yet the n8n readiness gate: provider `test`, strict
+  handoff blocking, operator-only resume and two-message cancellation are
+  completed in the following hardening task.
+
 ## PF5 — HTTP Authentication (2026-08-20)
 
 - **The transport now proves who it is.** `resolve_http_context` returned

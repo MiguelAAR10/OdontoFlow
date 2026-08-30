@@ -24,4 +24,4 @@ def list_services_route(
     # The tenant comes from the authenticated context. Omitting it fell back to
     # the bootstrap organization, so any credential read organization 1.
     ctx = resolve_http_context(request)
-    return list_services(db, organization_id=ctx.organization_id)
+    return list_services(db, ctx=ctx)

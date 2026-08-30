@@ -1033,8 +1033,29 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
         "payments",
         # PF7 — inventory ledger (T1).
         "inventory_movements",
+        # Integration security and messaging (Phases 1-2).
+        "security_events",
+        "channel_accounts",
+        "contact_identities",
+        "conversations",
+        "messages",
+        "outbound_messages",
+        # Contact-bound booking proposals (Phase 4).
+        "appointment_proposals",
+        # Deterministic receptionist state (Phase 5).
+        "appointment_reschedule_proposals",
+        "promotions",
+        "reception_handoffs",
     }
-    assert {row[1] for row in rows} == {"NO"}
+    nullable_by_table = dict(rows)
+    assert {
+        is_nullable
+        for table_name, is_nullable in rows
+        if table_name != "security_events"
+    } == {"NO"}
+    # Authentication can fail before a credential resolves a tenant, so this
+    # telemetry table deliberately permits a null organization reference.
+    assert nullable_by_table["security_events"] == "YES"
     # Practitioner and Principal stay global: no tenant column at all, they
     # reach a tenant only through their membership row (PF0 T2/P4/PR3).
     assert not [row for row in rows if row[0] in {"practitioners", "principals"}]

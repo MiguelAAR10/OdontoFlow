@@ -62,6 +62,4 @@ def list_eligible_practitioners_route(
     db: Session = Depends(get_db),
 ) -> list[PractitionerRead]:
     ctx = resolve_http_context(request)
-    return list_eligible_practitioners(
-        db, service_id, location_id, organization_id=ctx.organization_id
-    )
+    return list_eligible_practitioners(db, service_id, location_id, ctx=ctx)

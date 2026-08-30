@@ -14,6 +14,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db import Base
 
@@ -44,6 +45,9 @@ class Location(Base):
     )
     name: Mapped[str] = mapped_column(String(250), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(500))
+    public_phone: Mapped[str | None] = mapped_column(String(30))
+    opening_hours: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
