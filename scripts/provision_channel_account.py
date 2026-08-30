@@ -1,4 +1,4 @@
-"""Create or update a tenant-owned WhatsApp channel account without secrets."""
+"""Create or update a tenant-owned channel account without secrets."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from app.tenancy import BOOTSTRAP_ORGANIZATION_ID  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--organization", type=int, default=BOOTSTRAP_ORGANIZATION_ID)
+    parser.add_argument("--provider", choices=("whatsapp", "test"), default="whatsapp")
     parser.add_argument("--external-account-id", required=True)
     parser.add_argument("--phone-number-id")
     parser.add_argument("--display-name", required=True)
@@ -27,14 +28,14 @@ def main() -> int:
         account = session.scalar(
             select(ChannelAccount).where(
                 ChannelAccount.organization_id == args.organization,
-                ChannelAccount.provider == "whatsapp",
+                ChannelAccount.provider == args.provider,
                 ChannelAccount.external_account_id == args.external_account_id,
             )
         )
         if account is None:
             account = ChannelAccount(
                 organization_id=args.organization,
-                provider="whatsapp",
+                provider=args.provider,
                 external_account_id=args.external_account_id,
                 phone_number_id=args.phone_number_id,
                 display_name=args.display_name,
@@ -50,7 +51,7 @@ def main() -> int:
             action = "actualizada"
 
         print(
-            f"Cuenta WhatsApp {action}: id={account.id} "
+            f"Cuenta {args.provider} {action}: id={account.id} "
             f"organization_id={account.organization_id}."
         )
     return 0
@@ -58,4 +59,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

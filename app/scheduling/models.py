@@ -365,3 +365,83 @@ class AppointmentRescheduleProposal(Base):
             "status",
         ),
     )
+
+
+class AppointmentCancellationProposal(Base):
+    """Contact-bound cancellation that requires a later inbound message."""
+
+    __tablename__ = "appointment_cancellation_proposals"
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False
+    )
+    conversation_id: Mapped[int] = mapped_column(nullable=False)
+    contact_identity_id: Mapped[int] = mapped_column(nullable=False)
+    appointment_id: Mapped[int] = mapped_column(nullable=False)
+    source_message_id: Mapped[int] = mapped_column(nullable=False)
+    confirmation_token: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False
+    )
+    reason: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'expired')",
+            name="ck_appointment_cancellation_proposals_status",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_appointment_cancellation_proposals_organization_id",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "confirmation_token",
+            name="uq_appointment_cancellation_proposals_confirmation_token",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "conversation_id"],
+            ["conversations.organization_id", "conversations.id"],
+            ondelete="RESTRICT",
+            name="fk_cancellation_proposals_organization_conversation",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "contact_identity_id"],
+            ["contact_identities.organization_id", "contact_identities.id"],
+            ondelete="RESTRICT",
+            name="fk_cancellation_proposals_organization_contact",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "appointment_id"],
+            ["appointments.organization_id", "appointments.id"],
+            ondelete="RESTRICT",
+            name="fk_cancellation_proposals_organization_appointment",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "conversation_id", "source_message_id"],
+            ["messages.organization_id", "messages.conversation_id", "messages.id"],
+            ondelete="RESTRICT",
+            name="fk_cancellation_proposals_source_message",
+        ),
+        Index(
+            "uq_cancellation_proposals_pending_appointment",
+            "organization_id",
+            "conversation_id",
+            "appointment_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )

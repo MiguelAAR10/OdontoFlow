@@ -778,13 +778,22 @@ def test_the_authorization_query_reads_no_role_name_column():
 def test_the_seeded_catalog_is_exactly_the_m7_closed_set(session):
     codes = set(session.scalars(select(Permission.code)))
     assert codes == set(PERMISSION_CODES)
-    # 39 existing through booking + 4 least-privilege receptionist mutations.
-    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 43
+    # 39 existing through booking + 4 receptionist mutations + operator resume.
+    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 44
 
 
 def test_every_permission_code_follows_the_naming_convention():
     # M6: <domain>.<action>, lowercase, dot-separated, no wildcards, no hierarchy.
-    verbs = {"read", "create", "update", "cancel", "reschedule", "manage", "book"}
+    verbs = {
+        "read",
+        "create",
+        "update",
+        "cancel",
+        "reschedule",
+        "manage",
+        "book",
+        "resume",
+    }
     for code in PERMISSION_CODES:
         assert re.fullmatch(r"[a-z_]+\.[a-z]+", code), code
         domain, action = code.split(".")

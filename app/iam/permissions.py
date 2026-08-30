@@ -59,6 +59,7 @@ CONTACT_APPOINTMENTS_CANCEL = "contact_appointments.cancel"
 CONTACT_APPOINTMENTS_RESCHEDULE = "contact_appointments.reschedule"
 CONTACT_PROFILES_MANAGE = "contact_profiles.manage"
 CONVERSATIONS_MANAGE = "conversations.manage"
+CONVERSATIONS_RESUME = "conversations.resume"
 
 #: The closed code-owned set seeded by migrations. Future verticals extend it
 #: under M6; there are no wildcard or implicit permissions.
@@ -118,6 +119,10 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     ),
     (CONTACT_PROFILES_MANAGE, "Manage the patient profile bound to a channel contact"),
     (CONVERSATIONS_MANAGE, "Request and manage human conversation handoff"),
+    (
+        CONVERSATIONS_RESUME,
+        "Resume automation after a human receptionist resolves the handoff",
+    ),
 )
 
 PERMISSION_CODES: tuple[str, ...] = tuple(code for code, _name in PERMISSION_CATALOG)

@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session
 from app.context import resolve_http_context
 from app.db import get_db
 from app.errors import AppError, ErrorCode
+from app.agent_tools.reception import resume_automation
+from app.agent_tools.schemas import EmptyArguments
+from app.idempotency.service import run_idempotent_command
 from app.messaging.schemas import (
     InboundMessageCreate,
     InboundReceipt,
@@ -15,6 +18,8 @@ from app.messaging.schemas import (
     OutboundReceipt,
     OutboundResultCreate,
     OutboundStatusRead,
+    ResumeAutomationReceipt,
+    ResumeAutomationRequest,
 )
 from app.messaging.service import (
     claim_outbound_messages,
@@ -124,3 +129,34 @@ def settle_outbound_route(
         ctx=resolve_http_context(request),
     )
 
+
+@router.post(
+    "/conversations/{conversation_id}/resume",
+    response_model=ResumeAutomationReceipt,
+)
+def resume_automation_route(
+    conversation_id: int,
+    payload: ResumeAutomationRequest,
+    request: Request,
+    idempotency_key: str = Depends(require_uuid4_idempotency_key),
+    db: Session = Depends(get_db),
+) -> ResumeAutomationReceipt:
+    del payload
+    ctx = resolve_http_context(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=resume_automation,
+        operation_name="conversations.resume_automation",
+        key=idempotency_key,
+        ctx=ctx,
+        params={"conversation_id": conversation_id},
+        conversation_id=conversation_id,
+        arguments=EmptyArguments(),
+    )
+    value = outcome.outcome if outcome.replayed else outcome.result
+    return ResumeAutomationReceipt(
+        conversation_id=int(value["conversation_id"]),
+        status="open",
+        resolved_handoff_ids=[int(item) for item in value["resolved_handoff_ids"]],
+        replayed=outcome.replayed,
+    )

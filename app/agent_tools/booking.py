@@ -14,6 +14,7 @@ from app.agent_tools.schemas import (
     ConfirmAppointmentArguments,
     ProposeAppointmentArguments,
 )
+from app.agent_tools.guards import require_automation_active
 from app.agent_tools.reception import ensure_contact_profile
 from app.audit.service import record_event
 from app.catalog.models import Service
@@ -62,6 +63,7 @@ def _load_conversation_and_contact(
     conversation = session.scalar(statement)
     if conversation is None or conversation.status == "closed":
         raise AppError(ErrorCode.NOT_FOUND, "Conversation not found.")
+    require_automation_active(conversation)
     contact = session.scalar(
         select(ContactIdentity).where(
             ContactIdentity.organization_id == ctx.organization_id,
@@ -455,4 +457,3 @@ def run_confirm_appointment_tool(
         },
         "replayed": outcome.replayed,
     }
-

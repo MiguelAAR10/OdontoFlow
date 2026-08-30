@@ -52,6 +52,7 @@ from app.iam.permissions import (  # noqa: E402
     CONTACT_APPOINTMENTS_RESCHEDULE,
     CONTACT_PROFILES_MANAGE,
     CONVERSATIONS_MANAGE,
+    CONVERSATIONS_RESUME,
     CONVERSATIONS_READ,
     DELIVERIES_CREATE,
     DELIVERIES_MANAGE,
@@ -82,6 +83,7 @@ PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         CONVERSATIONS_MANAGE,
     ),
     "outbound-dispatcher": (DELIVERIES_MANAGE,),
+    "reception-operator": (CONVERSATIONS_READ, CONVERSATIONS_RESUME),
 }
 
 

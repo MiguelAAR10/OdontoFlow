@@ -378,8 +378,25 @@ def claim_outbound_messages(
         due = list(
             session.scalars(
                 select(OutboundMessage)
+                .join(
+                    Conversation,
+                    and_(
+                        Conversation.organization_id
+                        == OutboundMessage.organization_id,
+                        Conversation.id == OutboundMessage.conversation_id,
+                    ),
+                )
+                .join(
+                    ChannelAccount,
+                    and_(
+                        ChannelAccount.organization_id
+                        == Conversation.organization_id,
+                        ChannelAccount.id == Conversation.channel_account_id,
+                    ),
+                )
                 .where(
                     OutboundMessage.organization_id == ctx.organization_id,
+                    ChannelAccount.provider != "test",
                     OutboundMessage.next_attempt_at <= now,
                     or_(
                         OutboundMessage.status.in_(("pending", "failed")),
@@ -518,4 +535,3 @@ def redact_expired_message_content(
     )
     session.commit()
     return len(ids)
-

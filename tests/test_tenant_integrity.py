@@ -1042,8 +1042,9 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
         "outbound_messages",
         # Contact-bound booking proposals (Phase 4).
         "appointment_proposals",
-        # Deterministic receptionist state (Phase 5).
-        "appointment_reschedule_proposals",
+            # Deterministic receptionist state (Phase 5).
+            "appointment_cancellation_proposals",
+            "appointment_reschedule_proposals",
         "promotions",
         "reception_handoffs",
     }

@@ -16,7 +16,7 @@ from app.agent_tools.schemas import (
     AgentToolResult,
     AppointmentArguments,
     AvailableSlotsArguments,
-    CancelAppointmentArguments,
+    ConfirmCancellationArguments,
     ConfirmRescheduleArguments,
     ConfirmAppointmentArguments,
     ContactAppointmentsArguments,
@@ -24,6 +24,7 @@ from app.agent_tools.schemas import (
     EmptyArguments,
     HumanHandoffArguments,
     MUTATION_TOOL_NAMES,
+    ProposeCancellationArguments,
     ProposeRescheduleArguments,
     ProposeAppointmentArguments,
     ReceptionContextArguments,
@@ -36,13 +37,14 @@ from app.agent_tools.booking import (
 from app.agent_tools.reception import (
     contact_profile,
     reception_context,
-    run_cancel_appointment_tool,
+    run_confirm_cancellation_tool,
     run_confirm_reschedule_tool,
     run_handoff_tool,
+    run_propose_cancellation_tool,
     run_propose_reschedule_tool,
     run_register_contact_profile_tool,
-    run_resume_automation_tool,
 )
+from app.agent_tools.guards import require_automation_active
 from app.audit.service import record_event
 from app.catalog.service import list_services
 from app.errors import AppError, ErrorCode
@@ -71,11 +73,11 @@ ARGUMENT_MODELS: dict[str, ArgumentModel] = {
     "get_reception_context": ReceptionContextArguments,
     "get_contact_profile": EmptyArguments,
     "register_contact_profile": RegisterContactProfileArguments,
-    "cancel_appointment": CancelAppointmentArguments,
+    "propose_cancellation": ProposeCancellationArguments,
+    "confirm_cancellation": ConfirmCancellationArguments,
     "propose_reschedule": ProposeRescheduleArguments,
     "confirm_reschedule": ConfirmRescheduleArguments,
     "request_human_handoff": HumanHandoffArguments,
-    "resume_automation": EmptyArguments,
 }
 
 
@@ -120,6 +122,7 @@ def _load_conversation_contact(
     )
     if conversation is None:
         raise AppError(ErrorCode.NOT_FOUND, "Conversation not found.")
+    require_automation_active(conversation)
     contact = session.scalar(
         select(ContactIdentity).where(
             ContactIdentity.organization_id == ctx.organization_id,
@@ -326,9 +329,14 @@ def call_agent_tool(
                 data = run_register_contact_profile_tool(
                     session, call=call, arguments=arguments, ctx=ctx
                 )
-            elif call.tool_name == "cancel_appointment":
-                assert isinstance(arguments, CancelAppointmentArguments)
-                data = run_cancel_appointment_tool(
+            elif call.tool_name == "propose_cancellation":
+                assert isinstance(arguments, ProposeCancellationArguments)
+                data = run_propose_cancellation_tool(
+                    session, call=call, arguments=arguments, ctx=ctx
+                )
+            elif call.tool_name == "confirm_cancellation":
+                assert isinstance(arguments, ConfirmCancellationArguments)
+                data = run_confirm_cancellation_tool(
                     session, call=call, arguments=arguments, ctx=ctx
                 )
             elif call.tool_name == "propose_reschedule":
@@ -347,11 +355,7 @@ def call_agent_tool(
                     session, call=call, arguments=arguments, ctx=ctx
                 )
             else:
-                assert call.tool_name == "resume_automation"
-                assert isinstance(arguments, EmptyArguments)
-                data = run_resume_automation_tool(
-                    session, call=call, arguments=arguments, ctx=ctx
-                )
+                raise AssertionError(f"Unhandled mutation tool: {call.tool_name}")
         else:
             _set_statement_timeout(session)
             _conversation, contact = _load_conversation_contact(
@@ -411,4 +415,3 @@ def call_agent_tool(
         correlation_id=ctx.correlation_id,
         duration_ms=elapsed,
     )
-

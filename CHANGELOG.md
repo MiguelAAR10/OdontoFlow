@@ -1,5 +1,17 @@
 # OdontoFlow Changelog
 
+## n8n reception hardening (2026-08-30)
+
+- Added an explicit synthetic `test` provider whose messages are persisted but
+  whose outbounds can never be claimed for external delivery.
+- Blocked all LLM-facing tools during human handoff and moved automation resume
+  to an operator-only authenticated endpoint and permission profile.
+- Replaced direct cancellation with a durable two-message
+  proposal/confirmation contract tied to the contact and conversation.
+- Added migration `0015`, regenerated OpenAPI, provisioned the synthetic clinic
+  lab and added a secret-safe n8n bootstrap plus integration guide.
+- Full PostgreSQL suite: **466 passed**, 21 warnings, 0 failures.
+
 ## Reception foundation port (2026-08-30)
 
 - Ported the previously verified local integration foundation onto clean GitHub

@@ -90,6 +90,7 @@ def clean_tables(migrated_engine):
         }
         tables = (
             "reception_handoffs",
+            "appointment_cancellation_proposals",
             "outbound_messages",
             "messages",
             "conversations",

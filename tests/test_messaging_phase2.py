@@ -37,16 +37,23 @@ def _app_for(migrated_engine):
     return app
 
 
-def _seed_channel(session, *, organization_id=ORG, external_id="wa-clinic-1") -> int:
+def _seed_channel(
+    session,
+    *,
+    organization_id=ORG,
+    external_id="wa-clinic-1",
+    provider="whatsapp",
+) -> int:
     channel_id = session.execute(
         text(
             "INSERT INTO channel_accounts "
             "(organization_id, provider, external_account_id, phone_number_id, display_name) "
-            "VALUES (:org, 'whatsapp', :external, :phone, 'WhatsApp principal') "
+            "VALUES (:org, :provider, :external, :phone, 'Canal principal') "
             "RETURNING id"
         ),
         {
             "org": organization_id,
+            "provider": provider,
             "external": external_id,
             "phone": f"phone-{organization_id}-{external_id}",
         },
@@ -62,10 +69,11 @@ def _inbound(
     external_contact_id="wa-contact-51999000111",
     phone_e164="+51999000111",
     occurred_at="2026-08-20T14:00:00Z",
+    provider="whatsapp",
 ):
     return {
         "schema_version": "1.0",
-        "provider": "whatsapp",
+        "provider": provider,
         "channel_account_external_id": external_account_id,
         "provider_message_id": provider_message_id,
         "external_contact_id": external_contact_id,
@@ -183,6 +191,51 @@ def test_outbound_message_and_queue_row_are_atomic_and_idempotent(
     ).scalar_one()
     queued = session.execute(text("SELECT count(*) FROM outbound_messages")).scalar_one()
     assert (logical, queued) == (1, 1)
+
+
+def test_synthetic_provider_is_persisted_but_never_claimed_for_external_dispatch(
+    migrated_engine, session
+):
+    _seed_channel(session, external_id="test-lab", provider="test")
+    with TestClient(_app_for(migrated_engine), raise_server_exceptions=False) as client:
+        inbound = client.post(
+            "/internal/messages/inbound",
+            json=_inbound(
+                "test-message-001",
+                external_account_id="test-lab",
+                external_contact_id="synthetic-contact-001",
+                phone_e164="+51900000001",
+                provider="test",
+            ),
+            headers=_idempotency_headers(),
+        )
+        assert inbound.status_code == 201, inbound.text
+        queued = client.post(
+            f"/internal/conversations/{inbound.json()['conversation_id']}/outbound",
+            json={"text": "Respuesta visible solo en el laboratorio."},
+            headers=_idempotency_headers(),
+        )
+        assert queued.status_code == 201, queued.text
+        claimed = client.post(
+            "/internal/outbound/claim",
+            json={"limit": 10},
+            headers=_idempotency_headers(),
+        )
+
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json() == []
+    stored = session.execute(
+        text(
+            "SELECT c.provider, o.status, m.delivery_status "
+            "FROM outbound_messages o "
+            "JOIN messages m ON m.id=o.message_id "
+            "JOIN conversations v ON v.id=o.conversation_id "
+            "JOIN channel_accounts c ON c.id=v.channel_account_id "
+            "WHERE o.id=:id"
+        ),
+        {"id": queued.json()["outbound_id"]},
+    ).one()
+    assert stored == ("test", "pending", "pending")
 
 
 def test_transient_outbound_failures_reach_dead_letter_after_three_attempts(
@@ -448,4 +501,3 @@ def test_expired_content_is_redacted_without_losing_delivery_metadata(
     assert stored.content_redacted_at is not None
     assert stored.provider_message_id == "wamid.retention"
     assert stored.delivery_status == "received"
-

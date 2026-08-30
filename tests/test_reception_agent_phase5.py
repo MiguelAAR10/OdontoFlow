@@ -18,6 +18,7 @@ from app.messaging.models import (
     ChannelAccount,
     ContactIdentity,
     Conversation,
+    Message,
     ReceptionHandoff,
 )
 from app.organization.models import (
@@ -28,6 +29,7 @@ from app.organization.models import (
 )
 from app.scheduling.models import (
     Appointment,
+    AppointmentCancellationProposal,
     AppointmentRescheduleProposal,
     AvailabilityRule,
 )
@@ -151,6 +153,26 @@ def _seed_reception(session, *, suffix: str, phone: str):
     }
 
 
+def _add_inbound_message(session, seeded, *, suffix: str) -> Message:
+    instant = datetime(2026, 8, 25, 15, tzinfo=UTC)
+    message = Message(
+        organization_id=ORG,
+        channel_account_id=seeded["conversation"].channel_account_id,
+        conversation_id=seeded["conversation"].id,
+        direction="inbound",
+        provider_message_id=f"test-inbound-{suffix}",
+        message_type="text",
+        body_text="Confirmo la acción solicitada.",
+        media_reference=None,
+        delivery_status="received",
+        occurred_at=instant,
+        content_expires_at=instant.replace(year=2027),
+    )
+    session.add(message)
+    session.commit()
+    return message
+
+
 READ_TOOLS = {
     "get_reception_context",
     "get_contact_profile",
@@ -247,7 +269,9 @@ def test_register_contact_profile_is_idempotent_and_contact_bound(client, sessio
     assert session.scalar(select(func.count()).select_from(Patient)) == 1
 
 
-def test_contact_can_cancel_only_own_confirmed_appointment(client, session):
+def test_contact_cancellation_requires_a_proposal_and_a_later_inbound_message(
+    client, session
+):
     own = _seed_reception(session, suffix="cancel-own", phone="+51999120003")
     other = _seed_reception(session, suffix="cancel-other", phone="+51999120004")
     own_profile = _call(
@@ -287,31 +311,62 @@ def test_contact_can_cancel_only_own_confirmed_appointment(client, session):
     session.add_all([own_appointment, other_appointment])
     session.commit()
 
+    first_message = _add_inbound_message(session, own, suffix="cancel-proposal")
     denied = _call(
         client,
         conversation_id=own["conversation"].id,
-        tool_name="cancel_appointment",
+        tool_name="propose_cancellation",
         arguments={
             "appointment_id": other_appointment.id,
-            "confirmation": "CONFIRMO_CANCELACION",
+            "source_message_id": first_message.id,
         },
     )
+    proposed_response = _call(
+        client,
+        conversation_id=own["conversation"].id,
+        tool_name="propose_cancellation",
+        arguments={
+            "appointment_id": own_appointment.id,
+            "source_message_id": first_message.id,
+            "reason": "El paciente ya no podrá asistir.",
+        },
+    )
+    proposed = proposed_response.json()["data"]["proposal"]
+    second_message = _add_inbound_message(session, own, suffix="cancel-confirm")
+
+    same_message = _call(
+        client,
+        conversation_id=own["conversation"].id,
+        tool_name="confirm_cancellation",
+        arguments={
+            "proposal_id": proposed["id"],
+            "confirmation_token": proposed["confirmation_token"],
+            "source_message_id": first_message.id,
+        },
+    )
+    session.expire_all()
+    assert session.get(Appointment, own_appointment.id).state == "confirmed"
+
     accepted = _call(
         client,
         conversation_id=own["conversation"].id,
-        tool_name="cancel_appointment",
+        tool_name="confirm_cancellation",
         arguments={
-            "appointment_id": own_appointment.id,
-            "confirmation": "CONFIRMO_CANCELACION",
+            "proposal_id": proposed["id"],
+            "confirmation_token": proposed["confirmation_token"],
+            "source_message_id": second_message.id,
         },
     )
 
     assert denied.json()["error"]["code"] == "NOT_FOUND"
+    assert same_message.json()["error"]["code"] == "INVALID_INPUT"
     assert accepted.json()["data"]["appointment"]["state"] == "cancelled"
     assert accepted.json()["data"]["calendar_action"] == {
         "action": "delete",
         "appointment_id": own_appointment.id,
     }
+    session.expire_all()
+    assert session.get(AppointmentCancellationProposal, proposed["id"]).status == "confirmed"
 
 
 def test_reschedule_requires_proposal_then_explicit_confirmation(client, session):
@@ -395,8 +450,29 @@ def test_handoff_pauses_automation_and_persists_one_actionable_request(client, s
     assert session.get(Conversation, seeded["conversation"].id).status == "human_handoff"
     assert session.scalar(select(func.count()).select_from(ReceptionHandoff)) == 1
 
+    blocked_read = _call(
+        client,
+        conversation_id=seeded["conversation"].id,
+        tool_name="get_reception_context",
+        arguments={"as_of": "2026-08-25"},
+    )
+    blocked_write = _call(
+        client,
+        conversation_id=seeded["conversation"].id,
+        tool_name="register_contact_profile",
+        arguments={"full_name": "No debe ejecutarse"},
+    )
+    for response in (blocked_read, blocked_write):
+        assert response.status_code == 200
+        assert response.json()["status"] == "error"
+        assert response.json()["error"]["code"] == "ENTITY_INACTIVE"
+        assert response.json()["error"]["details"]["reason"] == "HUMAN_HANDOFF_ACTIVE"
 
-def test_resume_automation_resolves_handoff_and_reopens_conversation(client, session):
+
+def test_resume_automation_is_operator_only_and_not_an_agent_tool(client, session):
+    from app.iam.credentials import issue_credential
+    from scripts.issue_credential import _assign_profile, _resolve_principal
+
     seeded = _seed_reception(session, suffix="resume", phone="+51999120016")
     _call(
         client,
@@ -408,15 +484,50 @@ def test_resume_automation_resolves_handoff_and_reopens_conversation(client, ses
         },
     )
 
-    response = _call(
+    rejected_tool = _call(
         client,
         conversation_id=seeded["conversation"].id,
         tool_name="resume_automation",
         arguments={},
     )
+    agent_principal = _resolve_principal(
+        session,
+        organization_id=ORG,
+        name="resume-denied-conversation-agent",
+        principal_type="agent",
+    )
+    _assign_profile(
+        session,
+        organization_id=ORG,
+        principal_id=agent_principal.id,
+        profile="conversation-agent",
+    )
+    _credential, agent_token = issue_credential(
+        session,
+        organization_id=ORG,
+        principal_id=agent_principal.id,
+        name="resume-denied-conversation-agent",
+    )
+    session.commit()
+    denied_resume = client.post(
+        f"/internal/conversations/{seeded['conversation'].id}/resume",
+        json={},
+        headers={
+            "Authorization": f"Bearer {agent_token}",
+            "Idempotency-Key": str(uuid4()),
+        },
+    )
+    response = client.post(
+        f"/internal/conversations/{seeded['conversation'].id}/resume",
+        json={},
+        headers={"Idempotency-Key": str(uuid4())},
+    )
 
+    assert rejected_tool.status_code == 422
+    assert denied_resume.status_code == 403
+    assert denied_resume.json()["error"]["code"] == "PERMISSION_DENIED"
     assert response.status_code == 200
-    assert response.json()["data"]["automation"]["status"] == "open"
+    assert response.json()["status"] == "open"
     session.expire_all()
     assert session.get(Conversation, seeded["conversation"].id).status == "open"
     handoff = session.scalar(
@@ -454,4 +565,3 @@ def test_reception_cannot_book_services_that_require_a_safer_next_step(
     assert response.json()["status"] == "error"
     assert response.json()["error"]["code"] == "INVALID_INPUT"
     assert booking_mode in response.json()["error"]["details"]["booking_mode"]
-

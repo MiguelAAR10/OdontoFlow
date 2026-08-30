@@ -19,11 +19,11 @@ ToolName = Literal[
     "get_reception_context",
     "get_contact_profile",
     "register_contact_profile",
-    "cancel_appointment",
+    "propose_cancellation",
+    "confirm_cancellation",
     "propose_reschedule",
     "confirm_reschedule",
     "request_human_handoff",
-    "resume_automation",
 ]
 
 READ_TOOL_NAMES = {
@@ -40,11 +40,11 @@ MUTATION_TOOL_NAMES = {
     "propose_appointment",
     "confirm_appointment",
     "register_contact_profile",
-    "cancel_appointment",
+    "propose_cancellation",
+    "confirm_cancellation",
     "propose_reschedule",
     "confirm_reschedule",
     "request_human_handoff",
-    "resume_automation",
 }
 
 
@@ -66,12 +66,20 @@ class RegisterContactProfileArguments(BaseModel):
     birth_date: date | None = None
 
 
-class CancelAppointmentArguments(BaseModel):
+class ProposeCancellationArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     appointment_id: int = Field(ge=1)
-    confirmation: Literal["CONFIRMO_CANCELACION"]
+    source_message_id: int = Field(ge=1)
     reason: str | None = Field(default=None, max_length=300)
+
+
+class ConfirmCancellationArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: int = Field(ge=1)
+    confirmation_token: UUID
+    source_message_id: int = Field(ge=1)
 
 
 class ProposeRescheduleArguments(BaseModel):
@@ -219,4 +227,3 @@ class AgentToolResult(BaseModel):
     request_id: str
     correlation_id: str
     duration_ms: int = Field(ge=0)
-

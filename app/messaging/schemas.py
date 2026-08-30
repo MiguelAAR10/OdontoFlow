@@ -20,7 +20,7 @@ class InboundMessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["1.0"]
-    provider: Literal["whatsapp"]
+    provider: Literal["whatsapp", "test"]
     channel_account_external_id: str = Field(min_length=1, max_length=128)
     provider_message_id: str = Field(min_length=1, max_length=255)
     external_contact_id: str = Field(min_length=1, max_length=255)
@@ -98,3 +98,13 @@ class OutboundStatusRead(BaseModel):
     attempt_count: int
     next_attempt_at: datetime
 
+
+class ResumeAutomationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ResumeAutomationReceipt(BaseModel):
+    conversation_id: int
+    status: Literal["open"]
+    resolved_handoff_ids: list[int]
+    replayed: bool

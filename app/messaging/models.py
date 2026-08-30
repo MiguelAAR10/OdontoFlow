@@ -47,7 +47,10 @@ class ChannelAccount(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("provider IN ('whatsapp')", name="ck_channel_accounts_provider"),
+        CheckConstraint(
+            "provider IN ('whatsapp', 'test')",
+            name="ck_channel_accounts_provider",
+        ),
         UniqueConstraint(
             "organization_id", "id", name="uq_channel_accounts_organization_id"
         ),
@@ -396,4 +399,3 @@ class ReceptionHandoff(Base):
             postgresql_where=text("status IN ('pending', 'claimed')"),
         ),
     )
-

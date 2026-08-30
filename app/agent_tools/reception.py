@@ -12,14 +12,16 @@ from sqlalchemy.orm import Session
 
 from app.agent_tools.schemas import (
     AgentToolCall,
-    CancelAppointmentArguments,
+    ConfirmCancellationArguments,
     ConfirmRescheduleArguments,
     EmptyArguments,
     HumanHandoffArguments,
+    ProposeCancellationArguments,
     ProposeRescheduleArguments,
     ReceptionContextArguments,
     RegisterContactProfileArguments,
 )
+from app.agent_tools.guards import require_automation_active
 from app.audit.service import record_event
 from app.catalog.models import Promotion, Service
 from app.clinical.models import Patient
@@ -31,6 +33,7 @@ from app.iam.permissions import (
     CONTACT_APPOINTMENTS_RESCHEDULE,
     CONTACT_PROFILES_MANAGE,
     CONVERSATIONS_MANAGE,
+    CONVERSATIONS_RESUME,
     LOCATIONS_READ,
     SERVICES_READ,
 )
@@ -44,11 +47,16 @@ from app.idempotency.service import (
 from app.messaging.models import (
     ContactIdentity,
     Conversation,
+    Message,
     ReceptionHandoff,
 )
 from app.organization.models import Location, Organization
 from app.scheduling.availability import generate_slots
-from app.scheduling.models import Appointment, AppointmentRescheduleProposal
+from app.scheduling.models import (
+    Appointment,
+    AppointmentCancellationProposal,
+    AppointmentRescheduleProposal,
+)
 from app.scheduling.service import (
     _availability_inputs,
     _load_active_member,
@@ -162,6 +170,7 @@ def _load_conversation_contact(
     conversation_id: int,
     ctx: ExecutionContext,
     for_update: bool = False,
+    allow_human_handoff: bool = False,
 ) -> tuple[Conversation, ContactIdentity]:
     statement = select(Conversation).where(
         Conversation.organization_id == ctx.organization_id,
@@ -172,6 +181,8 @@ def _load_conversation_contact(
     conversation = session.scalar(statement)
     if conversation is None or conversation.status == "closed":
         raise AppError(ErrorCode.NOT_FOUND, "Conversation not found.")
+    if not allow_human_handoff:
+        require_automation_active(conversation)
     contact = session.scalar(
         select(ContactIdentity).where(
             ContactIdentity.organization_id == ctx.organization_id,
@@ -438,18 +449,71 @@ def _own_appointment(
     return appointment
 
 
-def cancel_contact_appointment(
+def _cancellation_outcome(proposal: AppointmentCancellationProposal) -> dict:
+    return {
+        "status": proposal.status,
+        "resource_type": "appointment_cancellation_proposal",
+        "resource_id": str(proposal.id),
+        "proposal_id": proposal.id,
+        "appointment_id": proposal.appointment_id,
+        "confirmation_token": str(proposal.confirmation_token),
+        "source_message_id": proposal.source_message_id,
+        "expires_at": proposal.expires_at.astimezone(UTC).isoformat(),
+    }
+
+
+def _cancellation_dto(value: AppointmentCancellationProposal | dict) -> dict:
+    outcome = (
+        _cancellation_outcome(value)
+        if isinstance(value, AppointmentCancellationProposal)
+        else value
+    )
+    return {
+        "id": int(outcome.get("proposal_id", outcome["resource_id"])),
+        "appointment_id": int(outcome["appointment_id"]),
+        "confirmation_token": outcome["confirmation_token"],
+        "source_message_id": int(outcome["source_message_id"]),
+        "expires_at": outcome["expires_at"],
+        "status": outcome["status"],
+    }
+
+
+def _require_inbound_message(
+    session: Session,
+    *,
+    conversation_id: int,
+    message_id: int,
+    ctx: ExecutionContext,
+) -> Message:
+    message = session.scalar(
+        select(Message).where(
+            Message.organization_id == ctx.organization_id,
+            Message.conversation_id == conversation_id,
+            Message.id == message_id,
+            Message.direction == "inbound",
+        )
+    )
+    if message is None:
+        raise AppError(
+            ErrorCode.INVALID_INPUT,
+            "Confirmation must reference an inbound message from this conversation.",
+        )
+    return message
+
+
+def create_cancellation_proposal(
     session: Session,
     *,
     ctx: ExecutionContext,
     conversation_id: int,
-    arguments: CancelAppointmentArguments,
+    arguments: ProposeCancellationArguments,
     idempotency: IdempotencyClaim | None = None,
-) -> Appointment:
+) -> AppointmentCancellationProposal:
+    now = datetime.now(UTC)
     with session.begin():
         receipt = claim_receipt(session, ctx, idempotency)
         require_permission(session, ctx, CONTACT_APPOINTMENTS_CANCEL)
-        _conversation, contact = _load_conversation_contact(
+        conversation, contact = _load_conversation_contact(
             session, conversation_id=conversation_id, ctx=ctx, for_update=True
         )
         appointment = _own_appointment(
@@ -460,8 +524,161 @@ def cancel_contact_appointment(
             for_update=True,
         )
         _require_confirmed(appointment)
+        _require_inbound_message(
+            session,
+            conversation_id=conversation_id,
+            message_id=arguments.source_message_id,
+            ctx=ctx,
+        )
+        pending_proposals = session.scalars(
+            select(AppointmentCancellationProposal)
+            .where(
+                AppointmentCancellationProposal.organization_id
+                == ctx.organization_id,
+                AppointmentCancellationProposal.conversation_id == conversation_id,
+                AppointmentCancellationProposal.appointment_id == appointment.id,
+                AppointmentCancellationProposal.status == "pending",
+            )
+            .with_for_update()
+        ).all()
+        for pending in pending_proposals:
+            pending.status = "expired"
+            pending.updated_at = now
+        proposal = AppointmentCancellationProposal(
+            organization_id=ctx.organization_id,
+            conversation_id=conversation.id,
+            contact_identity_id=contact.id,
+            appointment_id=appointment.id,
+            source_message_id=arguments.source_message_id,
+            confirmation_token=uuid4(),
+            reason=arguments.reason,
+            status="pending",
+            expires_at=now + PROPOSAL_TTL,
+            updated_at=now,
+        )
+        session.add(proposal)
+        session.flush()
+        conversation.status = "awaiting_confirmation"
+        conversation.updated_at = now
+        result = _cancellation_outcome(proposal)
+        record_event(
+            session,
+            ctx=ctx,
+            entity_type="appointment_cancellation_proposal",
+            entity_id=str(proposal.id),
+            action="appointment_cancellation_proposal.created",
+            after_state={
+                "appointment_id": appointment.id,
+                "source_message_id": arguments.source_message_id,
+                "reason_recorded": arguments.reason is not None,
+            },
+        )
+        settle_receipt(
+            receipt,
+            resource_type="appointment_cancellation_proposal",
+            resource_id=str(proposal.id),
+            outcome_json=result,
+        )
+    return proposal
+
+
+def run_propose_cancellation_tool(
+    session: Session,
+    *,
+    call: AgentToolCall,
+    arguments: ProposeCancellationArguments,
+    ctx: ExecutionContext,
+) -> dict:
+    outcome = run_idempotent_command(
+        session,
+        operation=create_cancellation_proposal,
+        operation_name="contact_appointments.propose_cancellation",
+        key=str(call.idempotency_key),
+        ctx=ctx,
+        params={"conversation_id": call.conversation_id, **arguments.model_dump()},
+        conversation_id=call.conversation_id,
+        arguments=arguments,
+    )
+    value = outcome.outcome if outcome.replayed else outcome.result
+    return {"proposal": _cancellation_dto(value), "replayed": outcome.replayed}
+
+
+def confirm_cancellation_proposal(
+    session: Session,
+    *,
+    ctx: ExecutionContext,
+    conversation_id: int,
+    arguments: ConfirmCancellationArguments,
+    idempotency: IdempotencyClaim | None = None,
+) -> Appointment:
+    now = datetime.now(UTC)
+    with session.begin():
+        receipt = claim_receipt(session, ctx, idempotency)
+        require_permission(session, ctx, CONTACT_APPOINTMENTS_CANCEL)
+        conversation, contact = _load_conversation_contact(
+            session, conversation_id=conversation_id, ctx=ctx, for_update=True
+        )
+        proposal = session.scalar(
+            select(AppointmentCancellationProposal)
+            .where(
+                AppointmentCancellationProposal.organization_id
+                == ctx.organization_id,
+                AppointmentCancellationProposal.id == arguments.proposal_id,
+                AppointmentCancellationProposal.conversation_id == conversation_id,
+                AppointmentCancellationProposal.confirmation_token
+                == arguments.confirmation_token,
+            )
+            .with_for_update()
+        )
+        if proposal is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Cancellation proposal not found.")
+        confirmation_message = _require_inbound_message(
+            session,
+            conversation_id=conversation_id,
+            message_id=arguments.source_message_id,
+            ctx=ctx,
+        )
+        original_message = _require_inbound_message(
+            session,
+            conversation_id=conversation_id,
+            message_id=proposal.source_message_id,
+            ctx=ctx,
+        )
+        if (
+            confirmation_message.id == original_message.id
+            or confirmation_message.created_at <= original_message.created_at
+        ):
+            raise AppError(
+                ErrorCode.INVALID_INPUT,
+                "Cancellation requires a later inbound confirmation message.",
+            )
+        appointment = _own_appointment(
+            session,
+            appointment_id=proposal.appointment_id,
+            contact=contact,
+            ctx=ctx,
+            for_update=True,
+        )
+        if proposal.status == "confirmed":
+            settle_receipt(
+                receipt,
+                resource_type="appointment",
+                resource_id=str(appointment.id),
+                outcome_json=_appointment_outcome(appointment),
+            )
+            return appointment
+        if proposal.status != "pending" or proposal.expires_at <= now:
+            raise AppError(
+                ErrorCode.INVALID_INPUT,
+                "The cancellation proposal is no longer confirmable.",
+            )
+        _require_confirmed(appointment)
         before = _appointment_outcome(appointment)
         appointment.state = "cancelled"
+        proposal.status = "confirmed"
+        proposal.updated_at = now
+        conversation.status = "open"
+        conversation.updated_at = now
         session.flush()
         after = _appointment_outcome(appointment)
         record_event(
@@ -471,7 +688,12 @@ def cancel_contact_appointment(
             entity_id=str(appointment.id),
             action="appointment.cancelled",
             before_state=before,
-            after_state={**after, "reason_recorded": arguments.reason is not None},
+            after_state={
+                **after,
+                "proposal_id": proposal.id,
+                "confirmation_message_id": confirmation_message.id,
+                "reason_recorded": proposal.reason is not None,
+            },
         )
         settle_receipt(
             receipt,
@@ -482,20 +704,23 @@ def cancel_contact_appointment(
     return appointment
 
 
-def run_cancel_appointment_tool(
+def run_confirm_cancellation_tool(
     session: Session,
     *,
     call: AgentToolCall,
-    arguments: CancelAppointmentArguments,
+    arguments: ConfirmCancellationArguments,
     ctx: ExecutionContext,
 ) -> dict:
     outcome = run_idempotent_command(
         session,
-        operation=cancel_contact_appointment,
-        operation_name="contact_appointments.cancel",
+        operation=confirm_cancellation_proposal,
+        operation_name="contact_appointments.confirm_cancellation",
         key=str(call.idempotency_key),
         ctx=ctx,
-        params={"conversation_id": call.conversation_id, **arguments.model_dump()},
+        params={
+            "conversation_id": call.conversation_id,
+            **arguments.model_dump(mode="json"),
+        },
         conversation_id=call.conversation_id,
         arguments=arguments,
     )
@@ -930,9 +1155,13 @@ def resume_automation(
     now = datetime.now(UTC)
     with session.begin():
         receipt = claim_receipt(session, ctx, idempotency)
-        require_permission(session, ctx, CONVERSATIONS_MANAGE)
+        require_permission(session, ctx, CONVERSATIONS_RESUME)
         conversation, _contact = _load_conversation_contact(
-            session, conversation_id=conversation_id, ctx=ctx, for_update=True
+            session,
+            conversation_id=conversation_id,
+            ctx=ctx,
+            for_update=True,
+            allow_human_handoff=True,
         )
         handoffs = session.scalars(
             select(ReceptionHandoff)
@@ -973,25 +1202,3 @@ def resume_automation(
             outcome_json=result,
         )
     return result
-
-
-def run_resume_automation_tool(
-    session: Session,
-    *,
-    call: AgentToolCall,
-    arguments: EmptyArguments,
-    ctx: ExecutionContext,
-) -> dict:
-    outcome = run_idempotent_command(
-        session,
-        operation=resume_automation,
-        operation_name="conversations.resume_automation",
-        key=str(call.idempotency_key),
-        ctx=ctx,
-        params={"conversation_id": call.conversation_id},
-        conversation_id=call.conversation_id,
-        arguments=arguments,
-    )
-    value = outcome.outcome if outcome.replayed else outcome.result
-    return {"automation": value, "replayed": outcome.replayed}
-

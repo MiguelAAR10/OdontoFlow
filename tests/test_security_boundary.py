@@ -439,3 +439,35 @@ def test_conversation_agent_profile_is_contact_safe_and_booking_bounded(session)
         "services.read",
     }
 
+
+def test_reception_operator_profile_can_resume_without_agent_business_tools(session):
+    from scripts.issue_credential import _assign_profile, _resolve_principal
+
+    principal = _resolve_principal(
+        session,
+        organization_id=ORG,
+        name="profile-reception-operator",
+        principal_type="integration",
+    )
+    _assign_profile(
+        session,
+        organization_id=ORG,
+        principal_id=principal.id,
+        profile="reception-operator",
+    )
+
+    codes = {
+        row[0]
+        for row in session.execute(
+            text(
+                "SELECT p.code FROM permissions p "
+                "JOIN role_permissions rp ON rp.permission_id=p.id "
+                "JOIN roles r ON r.id=rp.role_id "
+                "JOIN role_assignments ra ON ra.role_id=r.id "
+                "JOIN memberships m ON m.id=ra.membership_id "
+                "WHERE m.principal_id=:principal"
+            ),
+            {"principal": principal.id},
+        )
+    }
+    assert codes == {"conversations.read", "conversations.resume"}
