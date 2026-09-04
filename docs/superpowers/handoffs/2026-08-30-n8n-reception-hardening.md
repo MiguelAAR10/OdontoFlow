@@ -42,6 +42,15 @@ that can be connected to n8n without pretending to be WhatsApp.
 
 ## Boundary for the next task
 
-The existing n8n JSON package remains a deterministic mock harness. The next
-task replaces its mock broker with calls described in
-`docs/integration/n8n-reception-lab.md`; Telegram and WhatsApp remain disabled.
+The n8n package in `recepcion-odonto-smart` now calls the public API instead of
+the mock broker. `get_reception_context` was extended for the pilot so every
+new turn can recover the current conversation, contact profile, eight recent
+messages, contact-bound confirmed appointments and the latest valid pending
+proposal. This state is sourced from PostgreSQL through OdontoFlow only; n8n
+never connects to the database.
+
+The supervised test-channel path has live evidence for information, slot
+search, profile registration, proposal creation and booking confirmation. The
+remaining production boundary is still the external channel: Telegram and
+WhatsApp remain disabled, and a temporary Cloudflare quick tunnel is not a
+stable pilot ingress.

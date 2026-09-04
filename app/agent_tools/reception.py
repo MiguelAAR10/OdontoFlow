@@ -29,6 +29,7 @@ from app.commercial.models import Lead
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
 from app.iam.permissions import (
+    CONTACT_APPOINTMENTS_READ,
     CONTACT_APPOINTMENTS_CANCEL,
     CONTACT_APPOINTMENTS_RESCHEDULE,
     CONTACT_PROFILES_MANAGE,
@@ -55,6 +56,7 @@ from app.scheduling.availability import generate_slots
 from app.scheduling.models import (
     Appointment,
     AppointmentCancellationProposal,
+    AppointmentProposal,
     AppointmentRescheduleProposal,
 )
 from app.scheduling.service import (
@@ -76,10 +78,13 @@ def reception_context(
     session: Session,
     *,
     arguments: ReceptionContextArguments,
+    conversation: Conversation,
+    contact: ContactIdentity,
     ctx: ExecutionContext,
 ) -> dict:
     require_permission(session, ctx, SERVICES_READ)
     require_permission(session, ctx, LOCATIONS_READ)
+    require_permission(session, ctx, CONTACT_APPOINTMENTS_READ)
     organization = session.get(Organization, ctx.organization_id)
     if organization is None:
         raise AppError(ErrorCode.NOT_FOUND, "Organization not found.")
@@ -114,6 +119,148 @@ def reception_context(
             )
             .order_by(Promotion.priority.desc(), Promotion.code)
         )
+    )
+    now = datetime.now(UTC)
+    recent_messages = list(
+        session.scalars(
+            select(Message)
+            .where(
+                Message.organization_id == ctx.organization_id,
+                Message.conversation_id == conversation.id,
+                Message.content_expires_at > now,
+                Message.content_redacted_at.is_(None),
+            )
+            .order_by(Message.occurred_at.desc(), Message.id.desc())
+            .limit(8)
+        )
+    )
+    recent_messages.reverse()
+    latest_inbound_message_id = next(
+        (row.id for row in reversed(recent_messages) if row.direction == "inbound"),
+        None,
+    )
+    appointments = []
+    if contact.lead_id is not None:
+        appointments = list(
+            session.scalars(
+                select(Appointment)
+                .where(
+                    Appointment.organization_id == ctx.organization_id,
+                    Appointment.lead_id == contact.lead_id,
+                    Appointment.state == "confirmed",
+                    Appointment.start_utc >= now,
+                )
+                .order_by(Appointment.start_utc)
+                .limit(10)
+            )
+        )
+    pending_candidates: list[tuple[datetime, dict]] = []
+    booking = session.scalar(
+        select(AppointmentProposal)
+        .where(
+            AppointmentProposal.organization_id == ctx.organization_id,
+            AppointmentProposal.conversation_id == conversation.id,
+            AppointmentProposal.contact_identity_id == contact.id,
+            AppointmentProposal.status == "pending",
+            AppointmentProposal.expires_at > now,
+        )
+        .order_by(AppointmentProposal.created_at.desc(), AppointmentProposal.id.desc())
+        .limit(1)
+    )
+    if booking is not None:
+        pending_candidates.append(
+            (
+                booking.created_at,
+                {
+                    "action_type": "BOOK",
+                    "proposal_id": booking.id,
+                    "confirmation_token": str(booking.confirmation_token),
+                    "service_id": booking.service_id,
+                    "location_id": booking.location_id,
+                    "practitioner_id": booking.practitioner_id,
+                    "start": booking.start_utc.astimezone(UTC).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                    "end": booking.end_utc.astimezone(UTC).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                    "expires_at": booking.expires_at.astimezone(UTC).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                },
+            )
+        )
+    cancellation = session.scalar(
+        select(AppointmentCancellationProposal)
+        .where(
+            AppointmentCancellationProposal.organization_id == ctx.organization_id,
+            AppointmentCancellationProposal.conversation_id == conversation.id,
+            AppointmentCancellationProposal.contact_identity_id == contact.id,
+            AppointmentCancellationProposal.status == "pending",
+            AppointmentCancellationProposal.expires_at > now,
+        )
+        .order_by(
+            AppointmentCancellationProposal.created_at.desc(),
+            AppointmentCancellationProposal.id.desc(),
+        )
+        .limit(1)
+    )
+    if cancellation is not None:
+        pending_candidates.append(
+            (
+                cancellation.created_at,
+                {
+                    "action_type": "CANCEL",
+                    "proposal_id": cancellation.id,
+                    "confirmation_token": str(cancellation.confirmation_token),
+                    "appointment_id": cancellation.appointment_id,
+                    "created_from_message_id": cancellation.source_message_id,
+                    "expires_at": cancellation.expires_at.astimezone(UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                },
+            )
+        )
+    reschedule = session.scalar(
+        select(AppointmentRescheduleProposal)
+        .where(
+            AppointmentRescheduleProposal.organization_id == ctx.organization_id,
+            AppointmentRescheduleProposal.conversation_id == conversation.id,
+            AppointmentRescheduleProposal.contact_identity_id == contact.id,
+            AppointmentRescheduleProposal.status == "pending",
+            AppointmentRescheduleProposal.expires_at > now,
+        )
+        .order_by(
+            AppointmentRescheduleProposal.created_at.desc(),
+            AppointmentRescheduleProposal.id.desc(),
+        )
+        .limit(1)
+    )
+    if reschedule is not None:
+        pending_candidates.append(
+            (
+                reschedule.created_at,
+                {
+                    "action_type": "RESCHEDULE",
+                    "proposal_id": reschedule.id,
+                    "confirmation_token": str(reschedule.confirmation_token),
+                    "appointment_id": reschedule.appointment_id,
+                    "old_start": reschedule.old_start_utc.astimezone(UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "new_start": reschedule.new_start_utc.astimezone(UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "expires_at": reschedule.expires_at.astimezone(UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                },
+            )
+        )
+    pending_action = (
+        max(pending_candidates, key=lambda item: item[0])[1]
+        if pending_candidates
+        else None
     )
     return {
         "organization": {"name": organization.name},
@@ -156,6 +303,40 @@ def reception_context(
             }
             for row in promotions
         ],
+        "conversation": {
+            "id": conversation.id,
+            "status": conversation.status,
+            "latest_inbound_message_id": latest_inbound_message_id,
+        },
+        "contact_profile": contact_profile(session, contact=contact, ctx=ctx),
+        "recent_messages": [
+            {
+                "id": row.id,
+                "direction": row.direction,
+                "text": row.body_text,
+                "occurred_at": row.occurred_at.astimezone(UTC)
+                .isoformat()
+                .replace("+00:00", "Z"),
+            }
+            for row in recent_messages
+        ],
+        "appointments": [
+            {
+                "id": row.id,
+                "service_id": row.service_id,
+                "location_id": row.location_id,
+                "practitioner_id": row.practitioner_id,
+                "start": row.start_utc.astimezone(UTC).isoformat().replace(
+                    "+00:00", "Z"
+                ),
+                "end": row.end_utc.astimezone(UTC).isoformat().replace(
+                    "+00:00", "Z"
+                ),
+                "state": row.state,
+            }
+            for row in appointments
+        ],
+        "pending_action": pending_action,
         "safety": {
             "no_diagnosis": True,
             "no_prescriptions": True,

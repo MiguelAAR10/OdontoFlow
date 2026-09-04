@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import uuid4
 
 import pytest
@@ -30,6 +30,7 @@ from app.organization.models import (
 from app.scheduling.models import (
     Appointment,
     AppointmentCancellationProposal,
+    AppointmentProposal,
     AppointmentRescheduleProposal,
     AvailabilityRule,
 )
@@ -166,7 +167,7 @@ def _add_inbound_message(session, seeded, *, suffix: str) -> Message:
         media_reference=None,
         delivery_status="received",
         occurred_at=instant,
-        content_expires_at=instant.replace(year=2027),
+        content_expires_at=datetime.now(UTC) + timedelta(days=1),
     )
     session.add(message)
     session.commit()
@@ -203,8 +204,166 @@ def _call(client, *, conversation_id: int, tool_name: str, arguments: dict, key=
     )
 
 
-def test_reception_context_exposes_only_current_public_business_information(client, session):
+def test_reception_context_exposes_pilot_state_without_cross_contact_data(client, session):
     seeded = _seed_reception(session, suffix="context", phone="+51999120001")
+    other = _seed_reception(
+        session, suffix="context-other", phone="+51999120009"
+    )
+    profile = _call(
+        client,
+        conversation_id=seeded["conversation"].id,
+        tool_name="register_contact_profile",
+        arguments={"full_name": "Paciente Contexto"},
+    ).json()["data"]["profile"]
+    other_profile = _call(
+        client,
+        conversation_id=other["conversation"].id,
+        tool_name="register_contact_profile",
+        arguments={"full_name": "Paciente Ajeno"},
+    ).json()["data"]["profile"]
+    inbound = _add_inbound_message(session, seeded, suffix="context-latest")
+    review_now = datetime.now(UTC)
+    expired_message = Message(
+        organization_id=ORG,
+        channel_account_id=seeded["conversation"].channel_account_id,
+        conversation_id=seeded["conversation"].id,
+        direction="inbound",
+        provider_message_id="test-inbound-context-expired",
+        message_type="text",
+        body_text="Contenido vencido que no debe llegar al agente.",
+        media_reference=None,
+        delivery_status="received",
+        occurred_at=inbound.occurred_at + timedelta(minutes=1),
+        content_expires_at=review_now - timedelta(seconds=1),
+    )
+    redacted_message = Message(
+        organization_id=ORG,
+        channel_account_id=seeded["conversation"].channel_account_id,
+        conversation_id=seeded["conversation"].id,
+        direction="inbound",
+        provider_message_id="test-inbound-context-redacted",
+        message_type="text",
+        body_text="Contenido redactado que no debe llegar al agente.",
+        media_reference=None,
+        delivery_status="received",
+        occurred_at=inbound.occurred_at + timedelta(minutes=2),
+        content_expires_at=review_now + timedelta(days=1),
+        content_redacted_at=review_now - timedelta(seconds=1),
+    )
+    proposal_start = review_now + timedelta(days=7)
+    proposal = AppointmentProposal(
+        organization_id=ORG,
+        conversation_id=seeded["conversation"].id,
+        contact_identity_id=seeded["contact"].id,
+        lead_id=profile["lead_id"],
+        patient_id=profile["patient_id"],
+        service_id=seeded["service"].id,
+        practitioner_id=seeded["practitioner"].id,
+        location_id=seeded["location"].id,
+        full_name="Paciente Contexto",
+        start_utc=proposal_start,
+        end_utc=proposal_start + timedelta(hours=1),
+        confirmation_token=uuid4(),
+        status="pending",
+        expires_at=review_now + timedelta(minutes=15),
+    )
+    past_appointments = [
+        Appointment(
+            organization_id=ORG,
+            lead_id=profile["lead_id"],
+            patient_id=profile["patient_id"],
+            service_id=seeded["service"].id,
+            practitioner_id=seeded["practitioner"].id,
+            location_id=seeded["location"].id,
+            start_utc=review_now - timedelta(days=30 - index),
+            end_utc=review_now - timedelta(days=30 - index) + timedelta(hours=1),
+            state="confirmed",
+        )
+        for index in range(11)
+    ]
+    future_start = review_now + timedelta(days=30)
+    future_appointment = Appointment(
+        organization_id=ORG,
+        lead_id=profile["lead_id"],
+        patient_id=profile["patient_id"],
+        service_id=seeded["service"].id,
+        practitioner_id=seeded["practitioner"].id,
+        location_id=seeded["location"].id,
+        start_utc=future_start,
+        end_utc=future_start + timedelta(hours=1),
+        state="confirmed",
+    )
+    foreign_start = review_now + timedelta(days=45)
+    foreign_appointment = Appointment(
+        organization_id=ORG,
+        lead_id=other_profile["lead_id"],
+        patient_id=other_profile["patient_id"],
+        service_id=other["service"].id,
+        practitioner_id=other["practitioner"].id,
+        location_id=other["location"].id,
+        start_utc=foreign_start,
+        end_utc=foreign_start + timedelta(hours=1),
+        state="confirmed",
+    )
+    session.add_all(
+        [
+            expired_message,
+            redacted_message,
+            proposal,
+            *past_appointments,
+            future_appointment,
+            foreign_appointment,
+        ]
+    )
+    session.flush()
+    session.add_all(
+        [
+            AppointmentProposal(
+                organization_id=ORG,
+                conversation_id=seeded["conversation"].id,
+                contact_identity_id=other["contact"].id,
+                lead_id=other_profile["lead_id"],
+                patient_id=other_profile["patient_id"],
+                service_id=other["service"].id,
+                practitioner_id=other["practitioner"].id,
+                location_id=other["location"].id,
+                full_name="Paciente Ajeno",
+                start_utc=foreign_start + timedelta(days=1),
+                end_utc=foreign_start + timedelta(days=1, hours=1),
+                confirmation_token=uuid4(),
+                status="pending",
+                expires_at=review_now + timedelta(minutes=15),
+                created_at=review_now + timedelta(minutes=1),
+            ),
+            AppointmentCancellationProposal(
+                organization_id=ORG,
+                conversation_id=seeded["conversation"].id,
+                contact_identity_id=other["contact"].id,
+                appointment_id=foreign_appointment.id,
+                source_message_id=inbound.id,
+                confirmation_token=uuid4(),
+                status="pending",
+                expires_at=review_now + timedelta(minutes=15),
+                created_at=review_now + timedelta(minutes=2),
+            ),
+            AppointmentRescheduleProposal(
+                organization_id=ORG,
+                conversation_id=seeded["conversation"].id,
+                contact_identity_id=other["contact"].id,
+                appointment_id=foreign_appointment.id,
+                old_start_utc=foreign_appointment.start_utc,
+                old_end_utc=foreign_appointment.end_utc,
+                new_start_utc=foreign_start + timedelta(days=2),
+                new_end_utc=foreign_start + timedelta(days=2, hours=1),
+                confirmation_token=uuid4(),
+                status="pending",
+                expires_at=review_now + timedelta(minutes=15),
+                created_at=review_now + timedelta(minutes=3),
+            ),
+        ]
+    )
+    seeded["conversation"].status = "awaiting_confirmation"
+    session.commit()
 
     response = _call(
         client,
@@ -216,7 +375,9 @@ def test_reception_context_exposes_only_current_public_business_information(clie
     assert response.status_code == 200, response.text
     data = response.json()["data"]
     assert data["organization"]["name"]
-    assert data["services"] == [
+    assert [
+        row for row in data["services"] if row["id"] == seeded["service"].id
+    ] == [
         {
             "id": seeded["service"].id,
             "name": "Limpieza context",
@@ -230,6 +391,35 @@ def test_reception_context_exposes_only_current_public_business_information(clie
     assert data["locations"][0]["address"] == "Av. Prueba 123, Lima"
     assert data["locations"][0]["opening_hours"]["monday"][0]["open"] == "09:00"
     assert data["promotions"][0]["promotional_price"] == "99.00"
+    assert data["conversation"] == {
+        "id": seeded["conversation"].id,
+        "status": "awaiting_confirmation",
+        "latest_inbound_message_id": inbound.id,
+    }
+    assert data["contact_profile"]["full_name"] == "Paciente Contexto"
+    assert data["recent_messages"][-1] == {
+        "id": inbound.id,
+        "direction": "inbound",
+        "text": "Confirmo la acción solicitada.",
+        "occurred_at": "2026-08-25T15:00:00Z",
+    }
+    assert all(
+        row["text"]
+        not in {
+            "Contenido vencido que no debe llegar al agente.",
+            "Contenido redactado que no debe llegar al agente.",
+        }
+        for row in data["recent_messages"]
+    )
+    assert [row["id"] for row in data["appointments"]] == [future_appointment.id]
+    assert data["pending_action"]["action_type"] == "BOOK"
+    assert data["pending_action"]["proposal_id"] == proposal.id
+    assert data["pending_action"]["confirmation_token"] == str(
+        proposal.confirmation_token
+    )
+    assert data["pending_action"]["service_id"] == seeded["service"].id
+    assert data["pending_action"]["location_id"] == seeded["location"].id
+    assert data["pending_action"]["practitioner_id"] == seeded["practitioner"].id
     assert "organization_id" not in str(data)
 
 

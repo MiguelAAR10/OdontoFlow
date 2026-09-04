@@ -164,12 +164,19 @@ def _execute_tool(
     *,
     call: AgentToolCall,
     arguments: BaseModel,
+    conversation: Conversation,
     contact: ContactIdentity,
     ctx: ExecutionContext,
 ) -> dict:
     if call.tool_name == "get_reception_context":
         assert isinstance(arguments, ReceptionContextArguments)
-        return reception_context(session, arguments=arguments, ctx=ctx)
+        return reception_context(
+            session,
+            arguments=arguments,
+            conversation=conversation,
+            contact=contact,
+            ctx=ctx,
+        )
 
     if call.tool_name == "get_contact_profile":
         return {"profile": contact_profile(session, contact=contact, ctx=ctx)}
@@ -358,7 +365,7 @@ def call_agent_tool(
                 raise AssertionError(f"Unhandled mutation tool: {call.tool_name}")
         else:
             _set_statement_timeout(session)
-            _conversation, contact = _load_conversation_contact(
+            conversation, contact = _load_conversation_contact(
                 session,
                 conversation_id=call.conversation_id,
                 ctx=ctx,
@@ -367,6 +374,7 @@ def call_agent_tool(
                 session,
                 call=call,
                 arguments=arguments,
+                conversation=conversation,
                 contact=contact,
                 ctx=ctx,
             )

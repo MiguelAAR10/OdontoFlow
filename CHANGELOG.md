@@ -1,5 +1,20 @@
 # OdontoFlow Changelog
 
+## n8n pilot conversation context (2026-08-30)
+
+- Extended `get_reception_context` with contact-scoped conversation state,
+  profile, recent messages, confirmed appointments and the latest valid pending
+  booking, cancellation or reschedule proposal.
+- Kept every lookup organization- and conversation-bound; no cross-contact
+  records or internal organization identifiers are exposed to the agent.
+- Enforced message-retention expiry at read time, limited appointment context
+  to upcoming confirmed visits and bound every pending-action lookup to the
+  authenticated conversation contact.
+- This makes later messages such as “la primera opción” and “confirmo la
+  cancelación” recoverable from OdontoFlow instead of LLM memory.
+- Focused reception and bootstrap suites: **9 passed**, 2 warnings,
+  0 failures. Full PostgreSQL suite: **466 passed**, 21 warnings, 0 failures.
+
 ## n8n reception hardening (2026-08-30)
 
 - Added an explicit synthetic `test` provider whose messages are persisted but
