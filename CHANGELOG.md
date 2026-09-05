@@ -1,5 +1,18 @@
 # OdontoFlow Changelog
 
+## W3 — Sales Agent runtime (2026-09-05)
+
+- Added the optional top-level `sales_agent` process with LangChain
+  `create_agent`, structured responses, bounded execution and content-free
+  per-turn telemetry.
+- Added synchronous LangGraph `PostgresSaver` working memory on the separate
+  `odontoflow_agent` database, with `thread_id` bound to `conversation_id` and
+  explicit setup.
+- Added exactly seven conversation-bound typed tools that call the
+  authenticated `/agent-tools/call` gateway, plus `POST /sales-agent/turn` and
+  deterministic fake-model coverage; the canonical `app` remains free of
+  LangChain/LangGraph imports.
+
 ## W2 — Conversation listing and close transition (2026-09-05)
 
 - Added authenticated, tenant-scoped `GET /internal/conversations` with status,
