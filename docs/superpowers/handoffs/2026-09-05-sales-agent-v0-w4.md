@@ -90,6 +90,8 @@ The W4 tests prove:
 - turn three reads canonical `pending_action`, calls `confirm_appointment`,
   returns `confirmed`, and persists the reply through the canonical outbound
   endpoint;
+- a fourth synthetic inbound with a new provider message ID repeating the
+  confirmation leaves the canonical appointment count unchanged at one;
 - the selected appointment starts exactly at the slot returned by the
   canonical availability tool;
 - replaying the third event with the same provider ID leaves exactly one
@@ -185,7 +187,7 @@ before completion:
 
 ```text
 $ .venv/bin/python -m pytest -q
-502 passed, 20 warnings in 659.12s (0:10:59)
+502 passed, 20 warnings in 654.23s (0:10:54)
 ```
 
 W3's existing optional-import guard remains green in the focused run; W4's

@@ -540,6 +540,7 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
                 with migrated_engine.connect() as check:
                     assert check.execute(text("SELECT count(*) FROM appointments")).scalar_one() == 0
                 a3 = execute(_synthetic_event("a-3", "contact-a", "Yes confirm A"))
+                a4 = execute(_synthetic_event("a-4", "contact-a", "Yes confirm A"))
                 duplicate = execute(
                     _synthetic_event("a-3", "contact-a", "Yes confirm A")
                 )
@@ -563,14 +564,16 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
     assert a1 is not None and a1.agent_response["outcome"] == "continue"
     assert a2 is not None and a2.agent_response["outcome"] == "proposed"
     assert a3 is not None and a3.agent_response["outcome"] == "confirmed"
+    assert a4 is not None and a4.agent_response["outcome"] == "continue"
     assert duplicate is not None and duplicate.duplicate is True
     assert duplicate.agent_response is None
     assert b1 is not None and b2 is not None and b3 is not None
-    assert a1.conversation_id == a2.conversation_id == a3.conversation_id
+    assert a1.conversation_id == a2.conversation_id == a3.conversation_id == a4.conversation_id
     assert b1.conversation_id == b2.conversation_id == b3.conversation_id
     assert a1.conversation_id != b1.conversation_id
 
     assert a3.outbound_receipt is not None
+    assert a4.outbound_receipt is not None
     assert a3.test_provider_result == {
         "provider": "test",
         "status": "accepted",
@@ -611,7 +614,12 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
     human_b = [
         message.content for message in state_b.values["messages"] if message.type == "human"
     ]
-    assert human_a == ["request cleaning A", "Lince Monday A", "Yes confirm A"]
+    assert human_a == [
+        "request cleaning A",
+        "Lince Monday A",
+        "Yes confirm A",
+        "Yes confirm A",
+    ]
     assert human_b == ["request cleaning B", "Lince Monday B", "Yes confirm B"]
 
     appointment_starts = [
@@ -626,8 +634,8 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
     ]
     assert appointment_starts == observed_starts
 
-    assert session.execute(text("SELECT count(*) FROM messages WHERE direction='inbound'")).scalar_one() == 6
-    assert session.execute(text("SELECT count(*) FROM messages WHERE direction='outbound'")).scalar_one() == 6
+    assert session.execute(text("SELECT count(*) FROM messages WHERE direction='inbound'")).scalar_one() == 7
+    assert session.execute(text("SELECT count(*) FROM messages WHERE direction='outbound'")).scalar_one() == 7
     assert session.execute(text("SELECT count(*) FROM appointments")).scalar_one() == 2
     assert session.execute(text("SELECT count(*) FROM appointment_proposals WHERE status='confirmed'")).scalar_one() == 2
 
