@@ -1,5 +1,14 @@
 # OdontoFlow Changelog
 
+## W2 — Conversation listing and close transition (2026-09-05)
+
+- Added authenticated, tenant-scoped `GET /internal/conversations` with status,
+  exclusive `last_message_before`, deterministic ordering and a bounded limit.
+- Added PF4-idempotent `POST /internal/conversations/{conversation_id}/close`
+  under `conversations.manage`, with atomic audit and deterministic repeat/error
+  behavior; closing releases the existing one-open-conversation contact index.
+- Regenerated the committed OpenAPI documents without adding a migration.
+
 ## Sales Agent V0 integration boundary (2026-09-05)
 
 - Kept authentication mandatory on `/internal/*` and `/agent-tools/*`, while

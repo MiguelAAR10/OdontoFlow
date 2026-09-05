@@ -48,6 +48,22 @@ class InboundReceipt(BaseModel):
     duplicate: bool
 
 
+ConversationStatus = Literal["open", "awaiting_confirmation", "human_handoff", "closed"]
+
+
+class ConversationRead(BaseModel):
+    conversation_id: int
+    contact_identity_id: int
+    status: ConversationStatus
+    last_message_at: datetime
+
+
+class ConversationCloseReceipt(BaseModel):
+    conversation_id: int
+    status: Literal["closed"]
+    replayed: bool
+
+
 class OutboundMessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

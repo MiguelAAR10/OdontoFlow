@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.context import resolve_http_context
@@ -12,6 +13,9 @@ from app.idempotency.service import run_idempotent_command
 from app.messaging.schemas import (
     InboundMessageCreate,
     InboundReceipt,
+    ConversationCloseReceipt,
+    ConversationRead,
+    ConversationStatus,
     OutboundClaimRequest,
     OutboundDispatchItem,
     OutboundMessageCreate,
@@ -23,8 +27,10 @@ from app.messaging.schemas import (
 )
 from app.messaging.service import (
     claim_outbound_messages,
+    close_conversation,
     enqueue_outbound_message,
     ingest_inbound_message,
+    list_conversations,
     settle_outbound_result,
 )
 
@@ -33,6 +39,7 @@ UUID4_PATTERN = (
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
     r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
+CONVERSATIONS_CLOSE_OPERATION = "conversations.close"
 
 
 def require_uuid4_idempotency_key(
@@ -53,6 +60,32 @@ def require_uuid4_idempotency_key(
             "Idempotency-Key must be a canonical UUIDv4 value.",
         )
     return idempotency_key
+
+
+@router.get("/conversations", response_model=list[ConversationRead])
+def list_conversations_route(
+    request: Request,
+    status: ConversationStatus | None = Query(default=None),
+    last_message_before: datetime | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[ConversationRead]:
+    conversations = list_conversations(
+        db,
+        ctx=resolve_http_context(request),
+        status=status,
+        last_message_before=last_message_before,
+        limit=limit,
+    )
+    return [
+        ConversationRead(
+            conversation_id=conversation.id,
+            contact_identity_id=conversation.contact_identity_id,
+            status=conversation.status,
+            last_message_at=conversation.last_message_at,
+        )
+        for conversation in conversations
+    ]
 
 
 @router.post("/messages/inbound", response_model=InboundReceipt, status_code=201)
@@ -96,6 +129,33 @@ def enqueue_outbound_route(
     if receipt.duplicate:
         response.status_code = 200
     return receipt
+
+
+@router.post(
+    "/conversations/{conversation_id}/close",
+    response_model=ConversationCloseReceipt,
+)
+def close_conversation_route(
+    conversation_id: int,
+    request: Request,
+    response: Response,
+    idempotency_key: str = Depends(require_uuid4_idempotency_key),
+    db: Session = Depends(get_db),
+) -> ConversationCloseReceipt:
+    ctx = resolve_http_context(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=close_conversation,
+        operation_name=CONVERSATIONS_CLOSE_OPERATION,
+        key=idempotency_key,
+        ctx=ctx,
+        params={"conversation_id": conversation_id},
+        conversation_id=conversation_id,
+    )
+    value = outcome.outcome if outcome.replayed else outcome.result
+    if outcome.replayed:
+        response.headers["Idempotent-Replay"] = "true"
+    return ConversationCloseReceipt(**value, replayed=outcome.replayed)
 
 
 @router.post("/outbound/claim", response_model=list[OutboundDispatchItem])

@@ -12,8 +12,15 @@ from app.audit.service import record_event
 from app.config import get_settings
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
-from app.iam.permissions import DELIVERIES_CREATE, DELIVERIES_MANAGE, MESSAGES_CREATE
+from app.iam.permissions import (
+    CONVERSATIONS_MANAGE,
+    CONVERSATIONS_READ,
+    DELIVERIES_CREATE,
+    DELIVERIES_MANAGE,
+    MESSAGES_CREATE,
+)
 from app.iam.service import require_permission
+from app.idempotency.service import IdempotencyClaim, claim_receipt, settle_receipt
 from app.messaging.models import (
     ChannelAccount,
     ContactIdentity,
@@ -28,15 +35,115 @@ from app.messaging.schemas import (
     OutboundReceipt,
     OutboundResultCreate,
     OutboundStatusRead,
+    ConversationStatus,
 )
 
 UTC = timezone.utc
 MAX_OUTBOUND_ATTEMPTS = 3
 PROCESSING_LEASE = timedelta(minutes=5)
+CONVERSATION_STATUSES = frozenset(
+    {"open", "awaiting_confirmation", "human_handoff", "closed"}
+)
+MAX_CONVERSATION_LIST_LIMIT = 100
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def list_conversations(
+    session: Session,
+    *,
+    ctx: ExecutionContext,
+    status: ConversationStatus | None = None,
+    last_message_before: datetime | None = None,
+    limit: int = 50,
+) -> list[Conversation]:
+    """List one tenant's conversations for deterministic follow-up selection."""
+    if limit < 1 or limit > MAX_CONVERSATION_LIST_LIMIT:
+        raise AppError(
+            ErrorCode.INVALID_INPUT,
+            f"Conversation limit must be between 1 and {MAX_CONVERSATION_LIST_LIMIT}.",
+        )
+    if status is not None and status not in CONVERSATION_STATUSES:
+        raise AppError(ErrorCode.INVALID_INPUT, "Conversation status is invalid.")
+    if last_message_before is not None:
+        if (
+            last_message_before.tzinfo is None
+            or last_message_before.utcoffset() is None
+        ):
+            raise AppError(
+                ErrorCode.INVALID_INPUT,
+                "last_message_before must be timezone-aware.",
+            )
+        last_message_before = last_message_before.astimezone(UTC)
+
+    statement = select(Conversation).where(
+        Conversation.organization_id == ctx.organization_id
+    )
+    if status is not None:
+        statement = statement.where(Conversation.status == status)
+    if last_message_before is not None:
+        statement = statement.where(Conversation.last_message_at < last_message_before)
+    statement = statement.order_by(
+        Conversation.last_message_at.asc(), Conversation.id.asc()
+    ).limit(limit)
+
+    with session.begin():
+        require_permission(session, ctx, CONVERSATIONS_READ)
+        return list(session.scalars(statement))
+
+
+def close_conversation(
+    session: Session,
+    *,
+    conversation_id: int,
+    ctx: ExecutionContext,
+    idempotency: IdempotencyClaim | None = None,
+) -> dict:
+    """Close one tenant-scoped conversation atomically and audibly."""
+    now = _now()
+    with session.begin():
+        receipt = claim_receipt(session, ctx, idempotency)
+        require_permission(session, ctx, CONVERSATIONS_MANAGE)
+        conversation = session.execute(
+            select(Conversation)
+            .where(
+                Conversation.organization_id == ctx.organization_id,
+                Conversation.id == conversation_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if conversation is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Conversation not found.")
+        if conversation.status == "closed":
+            raise AppError(ErrorCode.ENTITY_INACTIVE, "Conversation is already closed.")
+
+        before_state = {"status": conversation.status}
+        conversation.status = "closed"
+        conversation.updated_at = now
+        session.flush()
+        record_event(
+            session,
+            ctx=ctx,
+            entity_type="conversation",
+            entity_id=str(conversation.id),
+            action="conversation.closed",
+            before_state=before_state,
+            after_state={"status": conversation.status},
+        )
+        outcome = {
+            "conversation_id": conversation.id,
+            "status": conversation.status,
+        }
+        settle_receipt(
+            receipt,
+            resource_type="conversation",
+            resource_id=str(conversation.id),
+            outcome_json=outcome,
+        )
+    return outcome
 
 
 def _load_channel(session: Session, data: InboundMessageCreate, organization_id: int):
