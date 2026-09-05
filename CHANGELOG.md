@@ -1,5 +1,18 @@
 # OdontoFlow Changelog
 
+## W4 — WF-01 Sales Agent V0 synthetic n8n loop (2026-09-05)
+
+- Added the versioned, inactive `WF-01` n8n export for synthetic `provider=test`
+  ingress, strict normalization, bounded conversation-scoped debounce,
+  authenticated HTTP orchestration, canonical outbound persistence and a
+  disabled scheduled-follow-up shape.
+- Added a repository-backed HTTP contract harness and real PostgreSQL E2E test
+  covering three-turn proposal/confirmation, provider-message dedupe,
+  conversation/thread isolation, canonical slot selection, outbound persistence
+  and handoff blocking without an n8n runtime or live provider.
+- Narrowed the n8n lab agent credential to the approved `sales-agent-v0`
+  permission profile.
+
 ## W3 — Sales Agent runtime (2026-09-05)
 
 - Added the optional top-level `sales_agent` process with LangChain

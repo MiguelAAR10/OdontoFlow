@@ -27,7 +27,7 @@ from scripts.seed_reception_demo import seed_reception_demo  # noqa: E402
 LAB_ACCOUNT = "odonto-smart-lab"
 LAB_CREDENTIALS = (
     ("ODONTOFLOW_INBOUND_TOKEN", "n8n-lab-inbound", "integration", "n8n-inbound"),
-    ("ODONTOFLOW_AGENT_TOKEN", "n8n-lab-agent", "agent", "conversation-agent"),
+    ("ODONTOFLOW_AGENT_TOKEN", "n8n-lab-agent", "agent", "sales-agent-v0"),
     (
         "ODONTOFLOW_OPERATOR_TOKEN",
         "n8n-lab-operator",

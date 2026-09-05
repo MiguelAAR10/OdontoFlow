@@ -1,0 +1,485 @@
+{
+  "name": "WF-01 Sales Agent V0 — Synthetic Inbound Loop",
+  "description": "Normalizes synthetic test-provider inbound events, debounces each provider/channel/contact stream, and orchestrates canonical ingress, one bounded Sales Agent turn, and outbound transcript persistence. This export exists to prove the smallest safe integration edge before any live clinic or provider connection is considered.",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf-01-sales-agent-v0-inbound",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wf01-trigger",
+      "name": "Synthetic/Test inbound trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        0
+      ],
+      "webhookId": "wf-01-sales-agent-v0-inbound"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const source = $json.body ?? $json;\nconst schemaVersion = source.schema_version ?? '1.0';\nconst provider = source.provider ?? 'test';\nconst providerMessageId = source.provider_message_id ?? source.message_id;\nconst contactId = source.external_contact_id ?? source.contact_id;\nconst text = typeof source.text === 'string' ? source.text.trim() : '';\nconst phone = String(source.phone_e164 ?? '+51999000001');\nconst channel = source.channel_account_external_id ?? 'odonto-smart-lab';\nif (schemaVersion !== '1.0' || provider !== 'test') throw new Error('WF-01 accepts schema_version=1.0 and provider=test only.');\nif (!providerMessageId || String(providerMessageId).length > 255 || !contactId || String(contactId).length > 255 || !text || text.length > 16000) throw new Error('WF-01 payload is missing a bounded message or contact.');\nif (!/^\\+[1-9][0-9]{7,14}$/.test(phone) || typeof channel !== 'string' || !channel.trim() || channel.length > 128) throw new Error('WF-01 contact or channel identity is invalid.');\nreturn { json: {\n  schema_version: '1.0',\n  provider: 'test',\n  channel_account_external_id: channel,\n  provider_message_id: String(providerMessageId),\n  external_contact_id: String(contactId),\n  phone_e164: phone,\n  message_type: 'text',\n  text,\n  occurred_at: source.occurred_at ?? new Date().toISOString(),\n  request_id: crypto.randomUUID(),\n  inbound_idempotency_key: crypto.randomUUID()\n} };"
+      },
+      "id": "wf01-normalize",
+      "name": "Normalize test inbound payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -980,
+        0
+      ],
+      "notes": "Allowlist the synthetic payload at the trust boundary; no business fields are accepted from the provider."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const state = $getWorkflowStaticData('global');\nconst key = [\n  $json.provider,\n  $json.channel_account_external_id,\n  $json.external_contact_id\n].join(':');\nstate.inboundBuffers ??= {};\nconst current = state.inboundBuffers[key] ?? { events: [], dueAt: 0 };\nif (current.events.length >= 8) throw new Error('WF-01 debounce buffer is full; retry transport later.');\ncurrent.events.push($json);\ncurrent.dueAt = Date.now() + 250;\nstate.inboundBuffers[key] = current;\nreturn { json: { ...$json, debounce_key: key, debounce_due_at: new Date(current.dueAt).toISOString() } };"
+      },
+      "id": "wf01-buffer",
+      "name": "Conversation-scoped debounce buffer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ],
+      "notes": "A bounded process-local POC buffer keyed by provider/channel/contact. Canonical provider_message_id dedupe remains authoritative."
+    },
+    {
+      "parameters": {
+        "amount": 0.25,
+        "unit": "seconds"
+      },
+      "id": "wf01-wait",
+      "name": "Wait for bounded debounce window",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const state = $getWorkflowStaticData('global');\nconst key = $input.first().json.debounce_key;\nconst pending = state.inboundBuffers?.[key];\nif (!pending || pending.dueAt > Date.now()) return [];\ndelete state.inboundBuffers[key];\nreturn pending.events.map(event => ({ json: event }));"
+      },
+      "id": "wf01-flush",
+      "name": "Flush ready conversation buffer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: { ...$json, outbound_idempotency_key: crypto.randomUUID() } };"
+      },
+      "id": "wf01-outbound-prepare",
+      "name": "Prepare outbound transport identity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        120
+      ],
+      "notes": "Create one UUIDv4 per logical outbound intent so transport retries replay the same canonical queue row."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.ODONTOFLOW_BASE_URL}}/internal/messages/inbound",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.ODONTOFLOW_INBOUND_TOKEN }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{$json.inbound_idempotency_key}}"
+            },
+            {
+              "name": "X-Request-Id",
+              "value": "={{$json.request_id}}"
+            },
+            {
+              "name": "X-Correlation-Id",
+              "value": "={{$json.request_id}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { schema_version: $json.schema_version, provider: $json.provider, channel_account_external_id: $json.channel_account_external_id, provider_message_id: $json.provider_message_id, external_contact_id: $json.external_contact_id, phone_e164: $json.phone_e164, message_type: $json.message_type, text: $json.text, occurred_at: $json.occurred_at } }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "wf01-inbound-http",
+      "name": "Persist inbound message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -80,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 250,
+      "notes": "Transport retries reuse the event identity; the backend provider_message_id constraint decides dedupe."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "wf01-duplicate-condition",
+              "leftValue": "={{$json.duplicate}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf01-dedupe-if",
+      "name": "Stop duplicate business action",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        140,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: { provider: 'test', status: 'deduplicated', duplicate: true, conversation_id: $json.conversation_id, message_id: $json.message_id } };"
+      },
+      "id": "wf01-duplicate-result",
+      "name": "Return duplicate inbound result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SALES_AGENT_BASE_URL}}/sales-agent/turn",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-Id",
+              "value": "={{$json.request_id ?? crypto.randomUUID()}}"
+            },
+            {
+              "name": "X-Correlation-Id",
+              "value": "={{$json.request_id ?? crypto.randomUUID()}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { conversation_id: $json.conversation_id, latest_inbound_message_id: $json.message_id } }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "wf01-agent-http",
+      "name": "Call Sales Agent turn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        380,
+        120
+      ],
+      "retryOnFail": false,
+      "notes": "The agent receives only canonical conversation and inbound identifiers; the model never receives provider credentials."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.ODONTOFLOW_BASE_URL}}/internal/conversations/{{$json.conversation_id}}/outbound",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.ODONTOFLOW_AGENT_TOKEN }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{$json.outbound_idempotency_key}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { text: $json.reply } }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "wf01-outbound-http",
+      "name": "Persist outbound response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 250,
+      "notes": "This is canonical transcript persistence. External delivery is intentionally outside the synthetic W4 run."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: { provider: 'test', status: 'accepted', delivery_mode: 'synthetic_only', outbound_id: $json.outbound_id, canonical_status: $json.status, test_result_id: `test-provider-${$json.outbound_id}` } };"
+      },
+      "id": "wf01-provider-result",
+      "name": "Return test-provider result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "wf01-schedule",
+      "name": "Scheduled follow-up shape (disabled)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -980,
+        360
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: { provider: 'test', status: 'scheduled_shape_disabled', automation: 'follow-up' } };"
+      },
+      "id": "wf01-schedule-guard",
+      "name": "Keep scheduled follow-up disabled",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        360
+      ],
+      "notes": "Shape only for W4. No autonomous follow-up or outbound action is enabled."
+    },
+    {
+      "parameters": {
+        "content": "### WF-01 boundary\n\nSynthetic/test provider only. The workflow normalizes and transports events; canonical identity, conversation state, availability, booking, handoff and transcript persistence remain in the backend.\n\nThe debounce store is process-local and bounded. A restart drops buffered events; transport retry plus backend provider_message_id dedupe make replay safe, but this POC is not a distributed queue.",
+        "height": 280,
+        "width": 440,
+        "color": 5
+      },
+      "id": "wf01-boundary-note",
+      "name": "WF-01 scope and restart limits",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1160,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Synthetic/Test inbound trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize test inbound payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize test inbound payload": {
+      "main": [
+        [
+          {
+            "node": "Conversation-scoped debounce buffer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation-scoped debounce buffer": {
+      "main": [
+        [
+          {
+            "node": "Wait for bounded debounce window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for bounded debounce window": {
+      "main": [
+        [
+          {
+            "node": "Flush ready conversation buffer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flush ready conversation buffer": {
+      "main": [
+        [
+          {
+            "node": "Persist inbound message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist inbound message": {
+      "main": [
+        [
+          {
+            "node": "Stop duplicate business action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stop duplicate business action": {
+      "main": [
+        [
+          {
+            "node": "Return duplicate inbound result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call Sales Agent turn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Sales Agent turn": {
+      "main": [
+        [
+          {
+            "node": "Prepare outbound transport identity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare outbound transport identity": {
+      "main": [
+        [
+          {
+            "node": "Persist outbound response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist outbound response": {
+      "main": [
+        [
+          {
+            "node": "Return test-provider result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scheduled follow-up shape (disabled)": {
+      "main": [
+        [
+          {
+            "node": "Keep scheduled follow-up disabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "synthetic",
+      "id": "wf01-tag-synthetic"
+    },
+    {
+      "name": "sales-agent",
+      "id": "wf01-tag-sales-agent"
+    },
+    {
+      "name": "integration",
+      "id": "wf01-tag-integration"
+    }
+  ],
+  "meta": {
+    "workflow_key": "WF-01",
+    "workflow_version": "0.1.0",
+    "provider": "test",
+    "status": "repository-export-only",
+    "runtime_validation": "unavailable-no-n8n-runtime"
+  }
+}
