@@ -511,14 +511,24 @@ def settle_outbound_result(
 
 
 def redact_expired_message_content(
-    session: Session, *, now: datetime | None = None, limit: int = 500
+    session: Session,
+    *,
+    organization_id: int,
+    now: datetime | None = None,
+    limit: int = 500,
 ) -> int:
-    """Redact expired content while preserving immutable delivery metadata."""
+    """Redact one tenant's expired content while preserving delivery metadata.
+
+    The organization is intentionally required at the service boundary. A
+    maintenance command that omits it must fail before it can scan or mutate
+    another tenant's messages.
+    """
     instant = now or _now()
     ids = list(
         session.scalars(
             select(Message.id)
             .where(
+                Message.organization_id == organization_id,
                 Message.content_expires_at <= instant,
                 Message.content_redacted_at.is_(None),
             )
@@ -530,7 +540,10 @@ def redact_expired_message_content(
         return 0
     session.execute(
         update(Message)
-        .where(Message.id.in_(ids))
+        .where(
+            Message.organization_id == organization_id,
+            Message.id.in_(ids),
+        )
         .values(body_text=None, media_reference=None, content_redacted_at=instant)
     )
     session.commit()

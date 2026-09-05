@@ -390,6 +390,12 @@ def call_agent_tool(
             error_code=code,
         )
         session.commit()
+        # Permission denials are transport authorization failures, not a
+        # domain/tool outcome. Preserve the audit row, then let the stable
+        # application error handler render HTTP 403 so dormant capabilities
+        # cannot be mistaken for an executable tool result.
+        if code == "PERMISSION_DENIED":
+            raise
         return AgentToolResult(
             tool_version=call.tool_version,
             status="error",

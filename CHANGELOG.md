@@ -1,5 +1,18 @@
 # OdontoFlow Changelog
 
+## Sales Agent V0 integration boundary (2026-09-05)
+
+- Kept authentication mandatory on `/internal/*` and `/agent-tools/*`, while
+  making the temporary ERP anonymous compatibility mode explicit via
+  `ERP_ANONYMOUS_COMPAT` (on by default in development, fail-closed in
+  production).
+- Removed promotions and unverified price/currency fields from reception
+  context without changing the immutable migration chain.
+- Added the least-privilege `sales-agent-v0` credential profile and tenant-
+  scoped message redaction requiring an explicit `--organization-id`.
+- Documented the canonical synthetic-data and dormant-capability boundary in
+  `CANONICAL.md`.
+
 ## n8n pilot conversation context (2026-08-30)
 
 - Extended `get_reception_context` with contact-scoped conversation state,

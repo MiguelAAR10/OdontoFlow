@@ -49,10 +49,16 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    # One gate for every business route. ``/health`` stays open on purpose:
-    # monitoring must not need a credential. Adding a router without this
-    # dependency is the failure mode ``tests/test_authentication.py`` guards.
+    # The integration surface is the trust boundary for n8n and agents.
+    # ``/health`` stays open on purpose: monitoring must not need a credential.
+    # ERP routers intentionally retain the explicit, temporary
+    # ``ERP_ANONYMOUS_COMPAT`` fallback in ``resolve_http_context`` so the
+    # existing frontend can keep working during the pilot.
     authenticated = [Depends(require_authenticated_context)]
+    integration_routers = (
+        agent_tools_router,
+        messaging_router,
+    )
     for business_router in (
         agent_tools_router,
         catalog_router,
@@ -64,7 +70,8 @@ def create_app() -> FastAPI:
         organization_router,
         scheduling_router,
     ):
-        app.include_router(business_router, dependencies=authenticated)
+        dependencies = authenticated if business_router in integration_routers else []
+        app.include_router(business_router, dependencies=dependencies)
 
     install_security_openapi(app)
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -23,7 +22,7 @@ from app.agent_tools.schemas import (
 )
 from app.agent_tools.guards import require_automation_active
 from app.audit.service import record_event
-from app.catalog.models import Promotion, Service
+from app.catalog.models import Service
 from app.clinical.models import Patient
 from app.commercial.models import Lead
 from app.errors import AppError, ErrorCode
@@ -70,10 +69,6 @@ from app.scheduling.service import (
 PROPOSAL_TTL = timedelta(minutes=15)
 
 
-def _money(value: Decimal | None) -> str | None:
-    return format(value, ".2f") if value is not None else None
-
-
 def reception_context(
     session: Session,
     *,
@@ -106,18 +101,6 @@ def reception_context(
                 Location.is_active.is_(True),
             )
             .order_by(Location.name)
-        )
-    )
-    promotions = list(
-        session.scalars(
-            select(Promotion)
-            .where(
-                Promotion.organization_id == ctx.organization_id,
-                Promotion.is_active.is_(True),
-                Promotion.valid_from <= arguments.as_of,
-                Promotion.valid_until >= arguments.as_of,
-            )
-            .order_by(Promotion.priority.desc(), Promotion.code)
         )
     )
     now = datetime.now(UTC)
@@ -270,8 +253,6 @@ def reception_context(
                 "name": row.name,
                 "description": row.public_description,
                 "duration_minutes": row.duration_minutes,
-                "base_price": _money(row.base_price),
-                "currency": row.currency,
                 "booking_mode": row.booking_mode,
             }
             for row in services
@@ -286,22 +267,6 @@ def reception_context(
                 "opening_hours": row.opening_hours,
             }
             for row in locations
-        ],
-        "promotions": [
-            {
-                "id": row.id,
-                "code": row.code,
-                "name": row.name,
-                "description": row.description,
-                "service_id": row.service_id,
-                "promotional_price": _money(row.promotional_price),
-                "discount_percent": _money(row.discount_percent),
-                "currency": row.currency,
-                "new_patients_only": row.new_patients_only,
-                "valid_from": row.valid_from.isoformat(),
-                "valid_until": row.valid_until.isoformat(),
-            }
-            for row in promotions
         ],
         "conversation": {
             "id": conversation.id,

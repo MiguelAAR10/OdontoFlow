@@ -180,18 +180,29 @@ READ_TOOLS = {
 }
 
 
-def _call(client, *, conversation_id: int, tool_name: str, arguments: dict, key=None):
+def _call(
+    client,
+    *,
+    conversation_id: int,
+    tool_name: str,
+    arguments: dict,
+    key=None,
+    auth_headers: dict[str, str] | None = None,
+):
     mutation = tool_name not in READ_TOOLS
     request_id = str(uuid4())
     correlation_id = str(uuid4())
     idem = (key or str(uuid4())) if mutation else None
+    headers = {
+        "Idempotency-Key": key or str(uuid4()),
+        "X-Request-Id": request_id,
+        "X-Correlation-Id": correlation_id,
+    }
+    if auth_headers is not None:
+        headers.update(auth_headers)
     return client.post(
         "/agent-tools/call",
-        headers={
-            "Idempotency-Key": key or str(uuid4()),
-            "X-Request-Id": request_id,
-            "X-Correlation-Id": correlation_id,
-        },
+        headers=headers,
         json={
             "tool_version": "1.1" if mutation else "1.0",
             "tool_name": tool_name,
@@ -383,14 +394,16 @@ def test_reception_context_exposes_pilot_state_without_cross_contact_data(client
             "name": "Limpieza context",
             "description": "Limpieza y profilaxis dental.",
             "duration_minutes": 60,
-            "base_price": "120.00",
-            "currency": "PEN",
             "booking_mode": "automatic",
         }
     ]
     assert data["locations"][0]["address"] == "Av. Prueba 123, Lima"
     assert data["locations"][0]["opening_hours"]["monday"][0]["open"] == "09:00"
-    assert data["promotions"][0]["promotional_price"] == "99.00"
+    assert "promotions" not in data
+    assert all(
+        "base_price" not in service and "currency" not in service
+        for service in data["services"]
+    )
     assert data["conversation"] == {
         "id": seeded["conversation"].id,
         "status": "awaiting_confirmation",
@@ -457,6 +470,112 @@ def test_register_contact_profile_is_idempotent_and_contact_bound(client, sessio
     assert patient.full_name == "Ana Pérez"
     assert patient.phone == "+51999120002"
     assert session.scalar(select(func.count()).select_from(Patient)) == 1
+
+
+def test_sales_agent_v0_books_but_cannot_use_dormant_permissions(client, session):
+    from app.iam.credentials import issue_credential
+    from scripts.issue_credential import _assign_profile, _resolve_principal
+
+    seeded = _seed_reception(session, suffix="sales-agent-v0", phone="+51999120017")
+    principal = _resolve_principal(
+        session,
+        organization_id=ORG,
+        name="sales-agent-v0-test",
+        principal_type="agent",
+    )
+    _assign_profile(
+        session,
+        organization_id=ORG,
+        principal_id=principal.id,
+        profile="sales-agent-v0",
+    )
+    _credential, token = issue_credential(
+        session,
+        organization_id=ORG,
+        principal_id=principal.id,
+        name="sales-agent-v0-test",
+    )
+    session.commit()
+    agent_headers = {"Authorization": f"Bearer {token}"}
+
+    proposed = _call(
+        client,
+        conversation_id=seeded["conversation"].id,
+        tool_name="propose_appointment",
+        arguments={
+            "full_name": "Paciente V0",
+            "service_id": seeded["service"].id,
+            "location_id": seeded["location"].id,
+            "practitioner_id": seeded["practitioner"].id,
+            "start": "2026-08-24T09:00:00-05:00",
+        },
+        auth_headers=agent_headers,
+    )
+    assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["status"] == "success", proposed.text
+    proposal = proposed.json()["data"]["proposal"]
+
+    confirmed = _call(
+        client,
+        conversation_id=seeded["conversation"].id,
+        tool_name="confirm_appointment",
+        arguments={
+            "proposal_id": proposal["id"],
+            "confirmation_token": proposal["confirmation_token"],
+        },
+        auth_headers=agent_headers,
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["status"] == "success", confirmed.text
+    appointment_id = confirmed.json()["data"]["appointment"]["id"]
+    inbound = _add_inbound_message(session, seeded, suffix="sales-agent-v0")
+
+    forbidden_tools = (
+        (
+            "propose_cancellation",
+            {
+                "appointment_id": appointment_id,
+                "source_message_id": inbound.id,
+            },
+        ),
+        (
+            "propose_reschedule",
+            {
+                "appointment_id": appointment_id,
+                "new_start": "2026-08-24T10:00:00-05:00",
+            },
+        ),
+        (
+            "register_contact_profile",
+            {"full_name": "No se debe modificar"},
+        ),
+    )
+    for tool_name, arguments in forbidden_tools:
+        response = _call(
+            client,
+            conversation_id=seeded["conversation"].id,
+            tool_name=tool_name,
+            arguments=arguments,
+            auth_headers=agent_headers,
+        )
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "PERMISSION_DENIED", response.text
+
+    delivery = client.post(
+        "/internal/outbound/claim",
+        json={"limit": 1},
+        headers={**agent_headers, "Idempotency-Key": str(uuid4())},
+    )
+    assert delivery.status_code == 403, delivery.text
+    assert delivery.json()["error"]["code"] == "PERMISSION_DENIED"
+
+    resume = client.post(
+        f"/internal/conversations/{seeded['conversation'].id}/resume",
+        json={},
+        headers={**agent_headers, "Idempotency-Key": str(uuid4())},
+    )
+    assert resume.status_code == 403, resume.text
+    assert resume.json()["error"]["code"] == "PERMISSION_DENIED"
 
 
 def test_contact_cancellation_requires_a_proposal_and_a_later_inbound_message(

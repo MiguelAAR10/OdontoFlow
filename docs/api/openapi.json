@@ -427,11 +427,6 @@
             }
           }
         },
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "in": "header",
@@ -658,11 +653,6 @@
             }
           }
         },
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "in": "header",
@@ -689,11 +679,6 @@
       "post": {
         "summary": "Create Patient Route",
         "operationId": "create_patient_route_patients_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -920,11 +905,6 @@
       "get": {
         "summary": "List Patients Route",
         "operationId": "list_patients_route_patients_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "search",
@@ -1137,11 +1117,6 @@
       "get": {
         "summary": "Get Patient Route",
         "operationId": "get_patient_route_patients__patient_id__get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "patient_id",
@@ -1343,11 +1318,6 @@
       "post": {
         "summary": "Create Visit Route",
         "operationId": "create_visit_route_visits_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1574,11 +1544,6 @@
       "get": {
         "summary": "List Visits Route",
         "operationId": "list_visits_route_visits_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "patient_id",
@@ -1791,11 +1756,6 @@
       "get": {
         "summary": "Get Visit Route",
         "operationId": "get_visit_route_visits__visit_id__get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "visit_id",
@@ -1997,11 +1957,6 @@
       "get": {
         "summary": "List Visit Executions Route",
         "operationId": "list_visit_executions_route_visits__visit_id__executions_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "visit_id",
@@ -2205,11 +2160,6 @@
       "post": {
         "summary": "Create Service Execution Route",
         "operationId": "create_service_execution_route_visits__visit_id__executions_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "visit_id",
@@ -2447,11 +2397,6 @@
       "get": {
         "summary": "List Leads Route",
         "operationId": "list_leads_route_leads_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "search",
@@ -2678,11 +2623,6 @@
       "post": {
         "summary": "Create Lead Route",
         "operationId": "create_lead_route_leads_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -2911,11 +2851,6 @@
       "get": {
         "summary": "Get Lead Route",
         "operationId": "get_lead_route_leads__lead_id__get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "lead_id",
@@ -3117,11 +3052,6 @@
       "post": {
         "summary": "Create Product Route",
         "operationId": "create_product_route_products_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3348,11 +3278,6 @@
       "get": {
         "summary": "List Products Route",
         "operationId": "list_products_route_products_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "search",
@@ -3581,11 +3506,6 @@
       "get": {
         "summary": "Get Product Route",
         "operationId": "get_product_route_products__product_id__get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "product_id",
@@ -3787,11 +3707,6 @@
       "post": {
         "summary": "Create Service Consumption Route",
         "operationId": "create_service_consumption_route_executions__execution_id__consumptions_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "execution_id",
@@ -4027,11 +3942,6 @@
       "get": {
         "summary": "List Service Consumptions Route",
         "operationId": "list_service_consumptions_route_executions__execution_id__consumptions_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "execution_id",
@@ -4237,11 +4147,6 @@
       "post": {
         "summary": "Create Charge Route",
         "operationId": "create_charge_route_executions__execution_id__charges_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "execution_id",
@@ -4479,11 +4384,6 @@
       "get": {
         "summary": "List Charges Route",
         "operationId": "list_charges_route_charges_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "execution_id",
@@ -4696,11 +4596,6 @@
       "get": {
         "summary": "Get Charge Route",
         "operationId": "get_charge_route_charges__charge_id__get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "charge_id",
@@ -4902,11 +4797,6 @@
       "post": {
         "summary": "Create Payment Route",
         "operationId": "create_payment_route_charges__charge_id__payments_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "charge_id",
@@ -5142,11 +5032,6 @@
       "get": {
         "summary": "List Payments Route",
         "operationId": "list_payments_route_charges__charge_id__payments_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "charge_id",
@@ -5352,11 +5237,6 @@
       "post": {
         "summary": "Register Entry Route",
         "operationId": "register_entry_route_products__product_id__entries_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "product_id",
@@ -5594,11 +5474,6 @@
       "post": {
         "summary": "Register Adjustment Route",
         "operationId": "register_adjustment_route_products__product_id__adjustments_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "product_id",
@@ -5836,11 +5711,6 @@
       "post": {
         "summary": "Register Transfer Route",
         "operationId": "register_transfer_route_products__product_id__transfers_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "product_id",
@@ -6078,11 +5948,6 @@
       "get": {
         "summary": "List Movements Route",
         "operationId": "list_movements_route_products__product_id__movements_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "product_id",
@@ -6299,11 +6164,6 @@
       "get": {
         "summary": "Get Balance Route",
         "operationId": "get_balance_route_products__product_id__balance_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "product_id",
@@ -7931,11 +7791,6 @@
             }
           }
         },
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "in": "header",
@@ -8162,11 +8017,6 @@
             }
           }
         },
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "in": "header",
@@ -8395,11 +8245,6 @@
             }
           }
         },
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "in": "header",
@@ -8628,11 +8473,6 @@
             }
           }
         },
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "in": "header",
@@ -8659,11 +8499,6 @@
       "get": {
         "summary": "List Eligible Practitioners Route",
         "operationId": "list_eligible_practitioners_route_practitioners_eligible_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "service_id",
@@ -9080,11 +8915,6 @@
             }
           }
         },
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "in": "header",
@@ -9313,11 +9143,6 @@
             }
           }
         },
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "in": "header",
@@ -9550,11 +9375,6 @@
             }
           }
         },
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "in": "header",
@@ -9582,11 +9402,6 @@
         "summary": "List Appointments Route",
         "description": "Agenda read: the acting organization's appointments, half-open window.\n\nThe window is ``[from_date, to_date)``; both bounds are optional and\npassed as RFC 3339 instants. Location/practitioner filters narrow the\nresult; the tenant always comes from the context, never from a query\nparameter (X3).",
         "operationId": "list_appointments_route_appointments_get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "from_date",
@@ -9847,11 +9662,6 @@
       "post": {
         "summary": "Create Appointment Route",
         "operationId": "create_appointment_route_appointments_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -10080,11 +9890,6 @@
       "get": {
         "summary": "Get Appointment Route",
         "operationId": "get_appointment_route_appointments__appointment_id__get",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "appointment_id",
@@ -10286,11 +10091,6 @@
       "post": {
         "summary": "Cancel Appointment Route",
         "operationId": "cancel_appointment_route_appointments__appointment_id__cancel_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "appointment_id",
@@ -10535,11 +10335,6 @@
       "post": {
         "summary": "Reschedule Appointment Route",
         "operationId": "reschedule_appointment_route_appointments__appointment_id__reschedule_post",
-        "security": [
-          {
-            "IntegrationBearer": []
-          }
-        ],
         "parameters": [
           {
             "name": "appointment_id",

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import threading
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -487,7 +490,14 @@ def test_expired_content_is_redacted_without_losing_delivery_metadata(
     )
     session.commit()
 
-    assert redact_expired_message_content(session, now=datetime.now(UTC)) == 1
+    assert (
+        redact_expired_message_content(
+            session,
+            organization_id=ORG,
+            now=datetime.now(UTC),
+        )
+        == 1
+    )
 
     stored = session.execute(
         text(
@@ -501,3 +511,119 @@ def test_expired_content_is_redacted_without_losing_delivery_metadata(
     assert stored.content_redacted_at is not None
     assert stored.provider_message_id == "wamid.retention"
     assert stored.delivery_status == "received"
+
+
+def test_expired_content_redaction_is_explicitly_tenant_scoped(session):
+    from app.messaging.service import redact_expired_message_content
+
+    org_b = session.execute(
+        text("INSERT INTO organizations (name) VALUES ('Redact B') RETURNING id")
+    ).scalar_one()
+    channel_a = _seed_channel(session, organization_id=ORG, external_id="redact-a")
+    channel_b = _seed_channel(session, organization_id=org_b, external_id="redact-b")
+    now = datetime.now(UTC)
+    expired = now - timedelta(minutes=1)
+
+    contact_a = session.execute(
+        text(
+            "INSERT INTO contact_identities "
+            "(organization_id, channel_account_id, external_contact_id, normalized_phone_e164) "
+            "VALUES (:org, :channel, :external, :phone) RETURNING id"
+        ),
+        {
+            "org": ORG,
+            "channel": channel_a,
+            "external": "redact-contact-a",
+            "phone": "+51999000121",
+        },
+    ).scalar_one()
+    contact_b = session.execute(
+        text(
+            "INSERT INTO contact_identities "
+            "(organization_id, channel_account_id, external_contact_id, normalized_phone_e164) "
+            "VALUES (:org, :channel, :external, :phone) RETURNING id"
+        ),
+        {
+            "org": org_b,
+            "channel": channel_b,
+            "external": "redact-contact-b",
+            "phone": "+51999000122",
+        },
+    ).scalar_one()
+    conversation_a = session.execute(
+        text(
+            "INSERT INTO conversations "
+            "(organization_id, channel_account_id, contact_identity_id, last_message_at) "
+            "VALUES (:org, :channel, :contact, :occurred) RETURNING id"
+        ),
+        {"org": ORG, "channel": channel_a, "contact": contact_a, "occurred": expired},
+    ).scalar_one()
+    conversation_b = session.execute(
+        text(
+            "INSERT INTO conversations "
+            "(organization_id, channel_account_id, contact_identity_id, last_message_at) "
+            "VALUES (:org, :channel, :contact, :occurred) RETURNING id"
+        ),
+        {"org": org_b, "channel": channel_b, "contact": contact_b, "occurred": expired},
+    ).scalar_one()
+    message_a = session.execute(
+        text(
+            "INSERT INTO messages "
+            "(organization_id, channel_account_id, conversation_id, direction, "
+            "provider_message_id, message_type, body_text, delivery_status, "
+            "occurred_at, content_expires_at) "
+            "VALUES (:org, :channel, :conversation, 'inbound', :provider, 'text', "
+            ":body, 'received', :occurred, :expires) RETURNING id"
+        ),
+        {
+            "org": ORG,
+            "channel": channel_a,
+            "conversation": conversation_a,
+            "provider": "redact-message-a",
+            "body": "tenant A secret",
+            "occurred": expired,
+            "expires": expired,
+        },
+    ).scalar_one()
+    message_b = session.execute(
+        text(
+            "INSERT INTO messages "
+            "(organization_id, channel_account_id, conversation_id, direction, "
+            "provider_message_id, message_type, body_text, delivery_status, "
+            "occurred_at, content_expires_at) "
+            "VALUES (:org, :channel, :conversation, 'inbound', :provider, 'text', "
+            ":body, 'received', :occurred, :expires) RETURNING id"
+        ),
+        {
+            "org": org_b,
+            "channel": channel_b,
+            "conversation": conversation_b,
+            "provider": "redact-message-b",
+            "body": "tenant B secret",
+            "occurred": expired,
+            "expires": expired,
+        },
+    ).scalar_one()
+    session.commit()
+
+    assert (
+        redact_expired_message_content(
+            session,
+            organization_id=ORG,
+            now=now,
+        )
+        == 1
+    )
+    assert session.execute(text("SELECT body_text FROM messages WHERE id=:id"), {"id": message_a}).scalar_one() is None
+    assert session.execute(text("SELECT body_text FROM messages WHERE id=:id"), {"id": message_b}).scalar_one() == "tenant B secret"
+
+
+def test_redaction_script_requires_an_explicit_organization_id():
+    result = subprocess.run(
+        [sys.executable, "scripts/redact_message_content.py", "--limit", "1"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "--organization-id" in result.stderr

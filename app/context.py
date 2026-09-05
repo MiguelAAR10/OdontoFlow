@@ -6,14 +6,16 @@ granted the whole permission catalog. The authorization layer was complete and
 proven; there was no door in front of it, so an anonymous caller was a
 superuser.
 
-``resolve_http_context`` now requires a bearer credential and reads the tenant
-and the principal **from PostgreSQL**. Three properties follow:
+The integration surface requires a bearer credential and reads the tenant and
+the principal **from PostgreSQL**. ERP routes retain a visibly temporary,
+flag-controlled anonymous compatibility mode so the existing frontend can keep
+working during the pilot. Three properties follow:
 
 * No header or body field can influence which organization a caller acts in;
   the values below come from the credential row, never from the request.
-* ``system`` is no longer reachable over HTTP. It keeps its catalog for
-  migrations, fixtures and scripts through :func:`default_context`, which is
-  deliberately *not* used by any router.
+* ``system`` is reachable only through the explicit ERP compatibility flag. It
+  keeps its catalog for migrations, fixtures and scripts through
+  :func:`default_context`; integration routes never use it.
 * Authentication runs on its **own short-lived session**, never the request
   session. AGENTS.md invariant 4 forbids pre-transaction queries on the session
   a service will call ``session.begin()`` on, and booking depends on receiving
@@ -84,7 +86,12 @@ def new_request_id() -> str:
     return new_uuid()
 
 
-def default_context(organization_id: int | None = None) -> ExecutionContext:
+def default_context(
+    organization_id: int | None = None,
+    *,
+    request_id: str | None = None,
+    correlation_id: str | None = None,
+) -> ExecutionContext:
     """The trusted/default execution context (BLOCKER-1 option b).
 
     The seeded ``system`` principal acting in ``organization_id`` (bootstrap by
@@ -92,7 +99,8 @@ def default_context(organization_id: int | None = None) -> ExecutionContext:
     This is the compatibility context existing fixtures and unauthenticated
     transports resolve to.
     """
-    request_id = new_request_id()
+    request_id = request_id or new_request_id()
+    correlation_id = correlation_id or request_id
     org_id = (
         organization_id if organization_id is not None else BOOTSTRAP_ORGANIZATION_ID
     )
@@ -101,7 +109,7 @@ def default_context(organization_id: int | None = None) -> ExecutionContext:
         principal_id=SYSTEM_PRINCIPAL_ID,
         principal_type=SYSTEM_PRINCIPAL_TYPE,
         request_id=request_id,
-        correlation_id=request_id,
+        correlation_id=correlation_id,
     )
 
 
@@ -207,17 +215,24 @@ def require_authenticated_context(
 
 
 def resolve_http_context(request: Request) -> ExecutionContext:
-    """Return the context the authentication gate already resolved.
+    """Return the gated context, or the explicit ERP compatibility context.
 
-    Kept as a function with its original signature so the 37 existing call
-    sites are untouched. It never re-authenticates: reaching it without a
-    cached context means the gate was bypassed, which is a wiring bug, not a
-    situation to paper over with a default identity.
+    Kept as a function with its original signature so the existing call sites
+    are untouched. Integration routes always reach this function after the
+    router-level gate. Ungated ERP routes may use the seeded system identity
+    only while ``ERP_ANONYMOUS_COMPAT`` is explicitly enabled; production
+    settings reject that mode and a disabled flag fails closed with 401.
     """
     context = getattr(request.state, "execution_context", None)
-    if context is None:
-        raise authentication_required()
-    return context
+    if context is not None:
+        return context
+    settings = getattr(request.app.state, "security_settings", None) or get_settings()
+    if settings.erp_anonymous_compat:
+        return default_context(
+            request_id=getattr(request.state, "request_id", None),
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )
+    raise authentication_required()
 
 
 def _principal_model():

@@ -82,6 +82,16 @@ PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         CONTACT_PROFILES_MANAGE,
         CONVERSATIONS_MANAGE,
     ),
+    "sales-agent-v0": (
+        CONVERSATIONS_READ,
+        SERVICES_READ,
+        LOCATIONS_READ,
+        AVAILABILITY_READ,
+        CONTACT_APPOINTMENTS_READ,
+        CONTACT_APPOINTMENTS_BOOK,
+        CONVERSATIONS_MANAGE,
+        DELIVERIES_CREATE,
+    ),
     "outbound-dispatcher": (DELIVERIES_MANAGE,),
     "reception-operator": (CONVERSATIONS_READ, CONVERSATIONS_RESUME),
 }

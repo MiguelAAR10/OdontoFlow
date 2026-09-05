@@ -19,6 +19,7 @@ from sqlalchemy.orm import sessionmaker
 
 from conftest import AUTH_HEADERS
 from app import create_app
+from app.config import get_settings
 from app.context import require_authenticated_context
 from app.db import get_db
 from app.iam.credentials import issue_credential
@@ -99,40 +100,50 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "json"),
-    (
-        ("GET", "/services", None),
-        ("GET", "/leads/999999", None),
-        (
-            "GET",
-            "/practitioners/eligible?service_id=1&location_id=1",
-            None,
-        ),
-        (
-            "POST",
-            "/slots/query",
-            {
-                "service_id": 1,
-                "location_id": 1,
-                "window_start": WINDOW_START,
-                "window_end": WINDOW_END,
-            },
-        ),
-    ),
-)
-def test_context_only_reads_deny_a_member_without_permissions(
-    migrated_engine, session, method, path, json
+def _outbound_claim(
+    client, *, token: str | None = None, extra_headers: dict[str, str] | None = None
+):
+    headers = {"Idempotency-Key": str(uuid4())}
+    if token is not None:
+        headers.update(_auth(token))
+    if extra_headers is not None:
+        headers.update(extra_headers)
+    return client.post(
+        "/internal/outbound/claim",
+        json={"limit": 1},
+        headers=headers,
+    )
+
+
+@pytest.mark.parametrize("path", ("/internal/outbound/claim", "/agent-tools/call"))
+def test_integration_routes_deny_a_member_without_permissions(
+    migrated_engine, session, path
 ):
     token = _token_for_member_without_roles(session)
     with TestClient(_app_for(migrated_engine), raise_server_exceptions=False) as client:
-        response = client.request(method, path, json=json, headers=_auth(token))
+        if path == "/internal/outbound/claim":
+            response = _outbound_claim(client, token=token)
+        else:
+            request_id = str(uuid4())
+            response = client.post(
+                path,
+                json={
+                    "tool_version": "1.0",
+                    "tool_name": "get_reception_context",
+                    "conversation_id": 999999,
+                    "request_id": request_id,
+                    "correlation_id": request_id,
+                    "idempotency_key": None,
+                    "arguments": {},
+                },
+                headers={**_auth(token), "X-Request-Id": request_id, "X-Correlation-Id": request_id},
+            )
 
     assert response.status_code == 403, response.text
     assert response.json()["error"]["code"] == "PERMISSION_DENIED"
 
 
-def test_every_business_route_has_the_authentication_dependency():
+def test_only_integration_routes_have_the_authentication_dependency():
     app = create_app()
     public_paths = {"/health"}
     documentation_paths = {app.docs_url, app.redoc_url, app.openapi_url}
@@ -143,7 +154,8 @@ def test_every_business_route_has_the_authentication_dependency():
         if route.path in public_paths | documentation_paths:
             continue
         dependencies = {dependency.call for dependency in route.dependant.dependencies}
-        assert require_authenticated_context in dependencies, route.path
+        is_integration = route.path.startswith(("/internal/", "/agent-tools/"))
+        assert (require_authenticated_context in dependencies) is is_integration, route.path
 
 
 def test_routers_cannot_reintroduce_the_system_default_identity():
@@ -167,13 +179,17 @@ def test_openapi_declares_bearer_authentication_on_business_operations():
     for path, path_item in schema["paths"].items():
         if path == "/health":
             continue
+        is_integration = path.startswith(("/internal/", "/agent-tools/"))
         for method, operation in path_item.items():
             if method.lower() not in {"get", "post", "put", "patch", "delete"}:
                 continue
-            assert {"IntegrationBearer": []} in operation.get("security", []), (
-                method,
-                path,
-            )
+            if is_integration:
+                assert {"IntegrationBearer": []} in operation.get("security", []), (
+                    method,
+                    path,
+                )
+            else:
+                assert "security" not in operation, (method, path)
             parameters = {
                 (parameter["in"], parameter["name"]): parameter
                 for parameter in operation.get("parameters", [])
@@ -198,7 +214,7 @@ def test_failed_authentication_is_a_real_redacted_security_event(migrated_engine
         "X-Correlation-Id": correlation_id,
     }
     with TestClient(_app_for(migrated_engine), raise_server_exceptions=False) as client:
-        response = client.get("/services", headers=headers)
+        response = _outbound_claim(client, extra_headers=headers)
 
     assert response.status_code == 401
     event = session.execute(
@@ -259,7 +275,11 @@ def test_security_headers_are_present_even_on_authentication_errors(migrated_eng
         raise_server_exceptions=False,
         base_url="https://testserver",
     ) as client:
-        response = client.get("/services")
+        response = client.post(
+            "/internal/outbound/claim",
+            json={"limit": 1},
+            headers={"Idempotency-Key": str(uuid4())},
+        )
 
     assert response.status_code == 401
     assert response.headers["X-Content-Type-Options"] == "nosniff"
@@ -291,11 +311,50 @@ def test_production_disables_interactive_docs_and_requires_https(monkeypatch, mi
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "HTTPS_REQUIRED"
 
+    with TestClient(app, raise_server_exceptions=False, base_url="https://testserver") as client:
+        response = client.get("/services")
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+
+
+def test_erp_anonymous_compat_defaults_on_in_development(monkeypatch, migrated_engine):
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.delenv("ERP_ANONYMOUS_COMPAT", raising=False)
+    assert get_settings().erp_anonymous_compat is True
+    with TestClient(
+        _app_for(migrated_engine),
+        raise_server_exceptions=False,
+        base_url="https://testserver",
+    ) as client:
+        response = client.get("/services")
+    assert response.status_code == 200, response.text
+
+
+def test_erp_anonymous_compat_defaults_off_in_production(monkeypatch, migrated_engine):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("ERP_ANONYMOUS_COMPAT", raising=False)
+    assert get_settings().erp_anonymous_compat is False
+    with TestClient(
+        _app_for(migrated_engine),
+        raise_server_exceptions=False,
+        base_url="https://testserver",
+    ) as client:
+        response = client.get("/services")
+    assert response.status_code == 401, response.text
+    assert response.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+
+
+def test_erp_anonymous_compat_cannot_be_enabled_in_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ERP_ANONYMOUS_COMPAT", "true")
+    with pytest.raises(ValueError, match="must be false in production"):
+        get_settings()
+
 
 def test_integration_kill_switch_fails_closed(monkeypatch, migrated_engine):
     monkeypatch.setenv("INTEGRATION_API_ENABLED", "false")
     with TestClient(_app_for(migrated_engine), raise_server_exceptions=False) as client:
-        response = client.get("/services", headers=AUTH_HEADERS)
+        response = _outbound_claim(client, token="ofk_testtest_integration-secret-for-tests")
         health = client.get("/health")
 
     assert response.status_code == 503
@@ -306,15 +365,15 @@ def test_integration_kill_switch_fails_closed(monkeypatch, migrated_engine):
 def test_rate_limit_is_shared_and_scoped_per_credential(
     monkeypatch, migrated_engine, session
 ):
-    monkeypatch.setenv("RATE_LIMIT_READS_PER_MINUTE", "2")
+    monkeypatch.setenv("RATE_LIMIT_MUTATIONS_PER_MINUTE", "2")
     token_a = _token_with_all_permissions(session, name="rate-a")
     token_b = _token_with_all_permissions(session, name="rate-b")
 
     with TestClient(_app_for(migrated_engine), raise_server_exceptions=False) as client:
-        assert client.get("/services", headers=_auth(token_a)).status_code == 200
-        assert client.get("/services", headers=_auth(token_a)).status_code == 200
-        limited = client.get("/services", headers=_auth(token_a))
-        independent = client.get("/services", headers=_auth(token_b))
+        assert _outbound_claim(client, token=token_a).status_code == 200
+        assert _outbound_claim(client, token=token_a).status_code == 200
+        limited = _outbound_claim(client, token=token_a)
+        independent = _outbound_claim(client, token=token_b)
 
     assert limited.status_code == 429
     assert limited.json()["error"]["code"] == "RATE_LIMITED"
@@ -437,6 +496,48 @@ def test_conversation_agent_profile_is_contact_safe_and_booking_bounded(session)
         "locations.read",
         "practitioners.read",
         "services.read",
+    }
+
+
+def test_sales_agent_v0_profile_is_least_privilege(session):
+    from scripts.issue_credential import _assign_profile, _resolve_principal
+
+    principal = _resolve_principal(
+        session,
+        organization_id=ORG,
+        name="profile-sales-agent-v0",
+        principal_type="agent",
+    )
+    _assign_profile(
+        session,
+        organization_id=ORG,
+        principal_id=principal.id,
+        profile="sales-agent-v0",
+    )
+
+    codes = {
+        row[0]
+        for row in session.execute(
+            text(
+                "SELECT p.code FROM permissions p "
+                "JOIN role_permissions rp ON rp.permission_id=p.id "
+                "JOIN roles r ON r.id=rp.role_id "
+                "JOIN role_assignments ra ON ra.role_id=r.id "
+                "JOIN memberships m ON m.id=ra.membership_id "
+                "WHERE m.principal_id=:principal"
+            ),
+            {"principal": principal.id},
+        )
+    }
+    assert codes == {
+        "conversations.read",
+        "services.read",
+        "locations.read",
+        "availability.read",
+        "contact_appointments.read",
+        "contact_appointments.book",
+        "conversations.manage",
+        "deliveries.create",
     }
 
 

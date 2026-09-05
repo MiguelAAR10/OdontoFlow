@@ -46,6 +46,7 @@ class Settings:
     database_url: str
     test_database_url: str
     integration_api_enabled: bool
+    erp_anonymous_compat: bool
     max_json_body_bytes: int
     rate_limit_reads_per_minute: int
     rate_limit_mutations_per_minute: int
@@ -56,11 +57,15 @@ class Settings:
 
 def get_settings() -> Settings:
     app_env = os.environ.get("APP_ENV", DEFAULT_APP_ENV).strip().lower()
+    erp_anonymous_compat = _boolean_env("ERP_ANONYMOUS_COMPAT", app_env != "production")
+    if app_env == "production" and erp_anonymous_compat:
+        raise ValueError("ERP_ANONYMOUS_COMPAT must be false in production.")
     return Settings(
         app_env=app_env,
         database_url=os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL),
         test_database_url=os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL),
         integration_api_enabled=_boolean_env("INTEGRATION_API_ENABLED", True),
+        erp_anonymous_compat=erp_anonymous_compat,
         max_json_body_bytes=_positive_int_env(
             "MAX_JSON_BODY_BYTES", DEFAULT_MAX_JSON_BODY_BYTES
         ),
