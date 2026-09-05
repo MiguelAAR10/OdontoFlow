@@ -13,6 +13,7 @@ from app.iam.permissions import (
     LOCATIONS_MANAGE,
     LOCATIONS_READ,
     PRACTITIONERS_MANAGE,
+    PRACTITIONERS_READ,
 )
 from app.iam.service import provision_system_access, require_permission
 from app.organization.models import (
@@ -239,8 +240,14 @@ def list_eligible_practitioners(
     service_id: int,
     location_id: int,
     organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
 ) -> list[Practitioner]:
-    org_id = resolve_organization_id(organization_id)
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(
+            session, resolved, PRACTITIONERS_READ, location_id=location_id
+        )
     service = _load_scoped(session, Service, service_id, org_id, "Service")
     location = _load_scoped(session, Location, location_id, org_id, "Location")
     if not service.is_active:

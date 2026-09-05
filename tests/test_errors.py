@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from conftest import AUTH_HEADERS
 from app import create_app
 from app.config import get_settings
 from app.errors import AppError, ErrorCode
@@ -83,7 +84,7 @@ def error_app(migrated_engine):
 
 @pytest.fixture
 def client(error_app):
-    return TestClient(error_app, raise_server_exceptions=False)
+    return TestClient(error_app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
 
 def test_app_error_not_found_returns_404_envelope(client):

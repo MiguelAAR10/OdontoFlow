@@ -100,8 +100,16 @@ def create_lead(
     return lead
 
 
-def get_lead(session: Session, lead_id: int, organization_id: int | None = None) -> Lead:
-    org_id = resolve_organization_id(organization_id)
+def get_lead(
+    session: Session,
+    lead_id: int,
+    organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
+) -> Lead:
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(session, resolved, LEADS_READ)
     lead = session.scalar(scoped(select(Lead).where(Lead.id == lead_id), Lead, org_id))
     if lead is None:
         raise AppError(ErrorCode.NOT_FOUND, "Lead not found.")

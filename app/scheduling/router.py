@@ -182,14 +182,18 @@ def create_schedule_block_route(
 
 @router.post("/slots/query", response_model=list[SlotResult])
 def query_slots_route(
-    payload: SlotQuery, db: Session = Depends(get_db)
+    payload: SlotQuery, request: Request, db: Session = Depends(get_db)
 ) -> list[SlotResult]:
+    # Availability is tenant data: without the context this answered for the
+    # bootstrap organization regardless of who asked.
+    ctx = resolve_http_context(request)
     return find_available_slots(
         db,
         payload.service_id,
         payload.location_id,
         payload.window_start,
         payload.window_end,
+        ctx=ctx,
     )
 
 

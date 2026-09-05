@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.audit.models import AuditEvent
+from app.audit.models import AuditEvent, SecurityEvent
 from app.iam.context import ExecutionContext
 
 SYSTEM_ACTOR_ID = "system"
@@ -37,6 +37,7 @@ def record_event(
     actor_id: str | None = None,
     actor_type: str | None = None,
     correlation_id: str | None = None,
+    request_id: str | None = None,
 ) -> AuditEvent:
     """Stage one audit row inside the caller's open transaction.
 
@@ -53,6 +54,7 @@ def record_event(
         organization_id = ctx.organization_id
         actor_id = str(ctx.principal_id)
         actor_type = ctx.principal_type
+        request_id = ctx.request_id
         correlation_id = ctx.correlation_id
 
     event = AuditEvent(
@@ -64,7 +66,33 @@ def record_event(
         entity_type=entity_type,
         before_state=before_state,
         after_state=after_state,
+        request_id=request_id,
         correlation_id=correlation_id,
+    )
+    session.add(event)
+    return event
+
+
+def record_security_event(
+    session: Session,
+    *,
+    event_type: str,
+    outcome: str,
+    request_id: str,
+    correlation_id: str,
+    organization_id: int | None = None,
+    principal_id: int | None = None,
+    metadata: dict | None = None,
+) -> SecurityEvent:
+    """Stage redacted security telemetry, including unattributed failures."""
+    event = SecurityEvent(
+        organization_id=organization_id,
+        principal_id=principal_id,
+        event_type=event_type,
+        outcome=outcome,
+        request_id=request_id,
+        correlation_id=correlation_id,
+        event_metadata=metadata or {},
     )
     session.add(event)
     return event

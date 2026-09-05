@@ -289,10 +289,88 @@ def _appointment_outcome(appointment: Appointment, *, status: str = "applied") -
         "end_utc": appointment.end_utc.astimezone(UTC).isoformat(),
         "organization_id": appointment.organization_id,
         "lead_id": appointment.lead_id,
+        "patient_id": appointment.patient_id,
         "service_id": appointment.service_id,
         "practitioner_id": appointment.practitioner_id,
         "location_id": appointment.location_id,
     }
+
+
+def _book_appointment_core(
+    session: Session,
+    *,
+    resolved: ExecutionContext,
+    lead_id: int,
+    service_id: int,
+    location_id: int,
+    practitioner_id: int,
+    start_utc: datetime,
+) -> Appointment:
+    """Stage one validated appointment inside the caller's transaction.
+
+    Transaction ownership, idempotency claim and authorization remain with the
+    public command service.  This shared core lets the contact-confirmation
+    command compose the exact same booking invariants while atomically updating
+    its persisted proposal.
+    """
+    org_id = resolved.organization_id
+    if (
+        session.scalar(scoped(select(Lead).where(Lead.id == lead_id), Lead, org_id))
+        is None
+    ):
+        raise AppError(ErrorCode.NOT_FOUND, "Lead not found.")
+    service = _load_active_scoped(session, Service, service_id, org_id, "Service")
+    location = _load_active_scoped(session, Location, location_id, org_id, "Location")
+    _load_active_member(session, practitioner_id, org_id)
+    _require_capability(session, practitioner_id, service_id, location_id, org_id)
+
+    duration_minutes = service.duration_minutes
+    end_utc = start_utc + timedelta(minutes=duration_minutes)
+
+    rules, blocks, appointments = _availability_inputs(
+        session, practitioner_id, location_id, start_utc, end_utc, org_id
+    )
+    bookable = generate_slots(
+        rules,
+        blocks,
+        appointments,
+        duration_minutes,
+        start_utc,
+        end_utc,
+        location.timezone,
+    )
+    if (start_utc, end_utc) not in bookable:
+        raise AppError(
+            ErrorCode.SLOT_BLOCKED,
+            "The requested interval is not a bookable slot for this practitioner.",
+        )
+
+    appointment = Appointment(
+        organization_id=org_id,
+        lead_id=lead_id,
+        service_id=service_id,
+        practitioner_id=practitioner_id,
+        location_id=location_id,
+        start_utc=start_utc,
+        end_utc=end_utc,
+        state=CONFIRMED,
+    )
+    session.add(appointment)
+    session.flush()
+    record_event(
+        session,
+        ctx=resolved,
+        entity_type=APPOINTMENT_ENTITY_TYPE,
+        entity_id=str(appointment.id),
+        action=APPOINTMENT_CREATED_ACTION,
+        after_state={
+            "id": appointment.id,
+            "start_utc": start_utc.isoformat(),
+            "end_utc": end_utc.isoformat(),
+            "state": CONFIRMED,
+        },
+    )
+    return appointment
 
 
 def book_appointment(
@@ -337,68 +415,19 @@ def book_appointment(
     """
     start_utc = _require_aware(start)
     resolved = _resolved_context(ctx, organization_id)
-    org_id = resolved.organization_id
 
     with session.begin():
         receipt = claim_receipt(session, resolved, idempotency)
         if ctx is not None:
             require_permission(session, resolved, APPOINTMENTS_CREATE, location_id=location_id)
-        if (
-            session.scalar(scoped(select(Lead).where(Lead.id == lead_id), Lead, org_id))
-            is None
-        ):
-            raise AppError(ErrorCode.NOT_FOUND, "Lead not found.")
-        service = _load_active_scoped(session, Service, service_id, org_id, "Service")
-        location = _load_active_scoped(session, Location, location_id, org_id, "Location")
-        _load_active_member(session, practitioner_id, org_id)
-        _require_capability(session, practitioner_id, service_id, location_id, org_id)
-
-        duration_minutes = service.duration_minutes
-        end_utc = start_utc + timedelta(minutes=duration_minutes)
-
-        rules, blocks, appointments = _availability_inputs(
-            session, practitioner_id, location_id, start_utc, end_utc, org_id
-        )
-        bookable = generate_slots(
-            rules,
-            blocks,
-            appointments,
-            duration_minutes,
-            start_utc,
-            end_utc,
-            location.timezone,
-        )
-        if (start_utc, end_utc) not in bookable:
-            raise AppError(
-                ErrorCode.SLOT_BLOCKED,
-                "The requested interval is not a bookable slot for this practitioner.",
-            )
-
-        appointment = Appointment(
-            organization_id=org_id,
+        appointment = _book_appointment_core(
+            session,
+            resolved=resolved,
             lead_id=lead_id,
             service_id=service_id,
-            practitioner_id=practitioner_id,
             location_id=location_id,
+            practitioner_id=practitioner_id,
             start_utc=start_utc,
-            end_utc=end_utc,
-            state=CONFIRMED,
-        )
-        session.add(appointment)
-        session.flush()  # assigns the id and lets the GiST rule on the interval
-
-        record_event(
-            session,
-            ctx=resolved,
-            entity_type=APPOINTMENT_ENTITY_TYPE,
-            entity_id=str(appointment.id),
-            action=APPOINTMENT_CREATED_ACTION,
-            after_state={
-                "id": appointment.id,
-                "start_utc": start_utc.isoformat(),
-                "end_utc": end_utc.isoformat(),
-                "state": CONFIRMED,
-            },
         )
         settle_receipt(
             receipt,

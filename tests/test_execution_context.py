@@ -9,6 +9,7 @@ mutation it describes.
 """
 
 from datetime import date, datetime, time, timezone
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import sessionmaker
 
+from conftest import AUTH_HEADERS
 from app import create_app
 from app.audit.models import AuditEvent
 from app.catalog.models import Service
@@ -227,13 +229,15 @@ def api_app(migrated_engine):
             db.close()
 
     app.dependency_overrides[get_db] = _db
+
+    app.state.auth_sessionmaker = maker
     return app, maker
 
 
 @pytest.fixture
 def client(api_app):
     app, _ = api_app
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
 
 def _book_payload(ids, start_utc):
@@ -264,16 +268,17 @@ def test_request_id_is_unique_per_http_request(client, session):
 
 def test_supplied_correlation_id_propagates_into_audit(client, session):
     ids = seed_booking(session)
+    correlation_id = str(uuid4())
 
     response = client.post(
         "/appointments",
         json=_book_payload(ids, utc_of(9)),
-        headers={"X-Correlation-Id": "trace-abc"},
+        headers={"X-Correlation-Id": correlation_id},
     )
     assert response.status_code == 201, response.text
 
     event = audit_rows(session, action="appointment.created")[0]
-    assert event.correlation_id == "trace-abc"
+    assert event.correlation_id == correlation_id
 
 
 def test_absent_correlation_derives_from_request_id(client, session):

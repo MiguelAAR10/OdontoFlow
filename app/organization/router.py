@@ -56,6 +56,10 @@ def create_capability_route(
 
 @router.get("/practitioners/eligible", response_model=list[PractitionerRead])
 def list_eligible_practitioners_route(
-    service_id: int, location_id: int, db: Session = Depends(get_db)
+    service_id: int,
+    location_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
 ) -> list[PractitionerRead]:
-    return list_eligible_practitioners(db, service_id, location_id)
+    ctx = resolve_http_context(request)
+    return list_eligible_practitioners(db, service_id, location_id, ctx=ctx)

@@ -159,7 +159,13 @@ def test_unknown_principal_type_is_rejected_by_the_database(session):
         session, PRINCIPAL_INSERT, {"type": "robot", "name": "Unknown kind"}
     )
     assert "ck_principals_type" in error
-    assert session.scalar(select(func.count()).select_from(Principal)) == 1  # only `system`
+    # Only ``system``; the conftest operator is fixture ground, not seed.
+    assert (
+        session.scalar(
+            select(func.count()).select_from(Principal).where(Principal.type == "system")
+        )
+        == 1
+    )
 
 
 def test_principals_are_global_and_carry_no_tenant_column():
@@ -493,7 +499,8 @@ def test_a_role_from_another_organization_cannot_be_assigned(session, two_orgs):
     assert "fk_role_assignments_organization_role" in error
     # System grants for both tenants (provisioned at creation, PR7) + the
     # human's own role: the rejected cross-org assignment added nothing.
-    assert session.scalar(select(func.count()).select_from(RoleAssignment)) == 3
+    # 3 created by this test + 1 for the conftest operator principal.
+    assert session.scalar(select(func.count()).select_from(RoleAssignment)) == 4
 
 
 def test_a_membership_from_another_organization_cannot_be_assigned(session, two_orgs):
@@ -771,15 +778,24 @@ def test_the_authorization_query_reads_no_role_name_column():
 def test_the_seeded_catalog_is_exactly_the_m7_closed_set(session):
     codes = set(session.scalars(select(Permission.code)))
     assert codes == set(PERMISSION_CODES)
-    # 17 base + 6 clinical (PF5) + 8 economic/ops (PF6) + 2 inventory (PF7).
-    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 33
+    # 39 existing through booking + 4 receptionist mutations + operator resume.
+    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 44
 
 
 def test_every_permission_code_follows_the_naming_convention():
     # M6: <domain>.<action>, lowercase, dot-separated, no wildcards, no hierarchy.
-    verbs = {"read", "create", "update", "cancel", "reschedule", "manage"}
+    verbs = {
+        "read",
+        "create",
+        "update",
+        "cancel",
+        "reschedule",
+        "manage",
+        "book",
+        "resume",
+    }
     for code in PERMISSION_CODES:
-        assert re.fullmatch(r"[a-z]+\.[a-z]+", code), code
+        assert re.fullmatch(r"[a-z_]+\.[a-z]+", code), code
         domain, action = code.split(".")
         assert action in verbs, code
         assert "*" not in code
@@ -806,11 +822,18 @@ def test_no_application_surface_writes_the_permission_catalog():
 
 
 def test_the_migration_seeds_exactly_one_system_principal(session):
-    principals = session.scalars(select(Principal)).all()
-    assert len(principals) == 1
-    system = principals[0]
+    """The migration seeds one platform actor and no more.
+
+    Scoped to ``type == "system"``: the conftest now also seeds the ``human``
+    operator every API test authenticates as, which is fixture ground, not
+    something migration ``0003`` creates.
+    """
+    system_principals = session.scalars(
+        select(Principal).where(Principal.type == "system")
+    ).all()
+    assert len(system_principals) == 1
+    system = system_principals[0]
     assert system.id == SYSTEM_PRINCIPAL_ID
-    assert system.type == "system"
     assert system.is_active is True
 
 

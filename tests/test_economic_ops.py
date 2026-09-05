@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import sessionmaker
 
+from conftest import AUTH_HEADERS
 from app import create_app
 from app.audit.models import AuditEvent
 from app.catalog.models import Service
@@ -980,13 +981,15 @@ def api_app(migrated_engine):
             db.close()
 
     app.dependency_overrides[get_db] = _db
+
+    app.state.auth_sessionmaker = maker
     return app, maker
 
 
 @pytest.fixture
 def client(api_app):
     app, _ = api_app
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
 
 def test_economic_http_journey(client, session):

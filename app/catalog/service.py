@@ -6,7 +6,7 @@ from app.catalog.schemas import ServiceCreate
 from app.context import default_context
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
-from app.iam.permissions import SERVICES_MANAGE
+from app.iam.permissions import SERVICES_MANAGE, SERVICES_READ
 from app.iam.service import require_permission
 from app.tenancy import resolve_organization_id
 
@@ -51,8 +51,15 @@ def create_service(
     return service
 
 
-def list_services(session: Session, organization_id: int | None = None) -> list[Service]:
-    org_id = resolve_organization_id(organization_id)
+def list_services(
+    session: Session,
+    organization_id: int | None = None,
+    ctx: ExecutionContext | None = None,
+) -> list[Service]:
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(session, resolved, SERVICES_READ)
     return list(
         session.scalars(
             select(Service)

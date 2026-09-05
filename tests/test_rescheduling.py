@@ -20,6 +20,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
+from conftest import AUTH_HEADERS
 from app import create_app
 from app.audit.models import AuditEvent
 from app.catalog.models import Service
@@ -846,12 +847,14 @@ def api_app(migrated_engine):
             db.close()
 
     app.dependency_overrides[get_db] = _db
+
+    app.state.auth_sessionmaker = maker
     return app
 
 
 @pytest.fixture
 def client(api_app):
-    return TestClient(api_app, raise_server_exceptions=False)
+    return TestClient(api_app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
 
 def _dt(value):

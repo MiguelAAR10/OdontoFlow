@@ -16,6 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
+from conftest import AUTH_HEADERS
 from app import create_app
 from app.db import get_db
 from app.scheduling.models import AvailabilityRule, ScheduleBlock
@@ -47,13 +48,15 @@ def api_app(migrated_engine):
             db.close()
 
     app.dependency_overrides[get_db] = _db
+
+    app.state.auth_sessionmaker = maker
     return app, maker
 
 
 @pytest.fixture
 def client(api_app):
     app, _maker = api_app
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
 
 def _seed(client, service_duration=30):
@@ -637,7 +640,7 @@ def test_real_23p01_path_returns_409_appointment_conflict(api_app, session):
     transport layer maps it to the stable 409 APPOINTMENT_CONFLICT envelope.
     """
     app, maker = api_app
-    client = TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
     ids = _seed(client)
 
     gate = maker()
@@ -727,7 +730,7 @@ def test_first_40p01_retries_exactly_once_then_succeeds(api_app):
         }
 
     app.dependency_overrides[get_booking_operation] = lambda: fake_op
-    client = TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
     response = client.post(
         "/appointments",
@@ -757,7 +760,7 @@ def test_40p01_once_then_success_returns_201(api_app):
         return real_operation(session, **kwargs)
 
     app.dependency_overrides[get_booking_operation] = lambda: fake_op
-    client = TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
     ids = _seed(client)
 
     response = _book(client, ids)
@@ -778,7 +781,7 @@ def test_repeated_40p01_returns_409_appointment_conflict_without_db_leaks(api_ap
         raise _fake_40p01_exc()
 
     app.dependency_overrides[get_booking_operation] = lambda: fake_op
-    client = TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False, headers=AUTH_HEADERS)
 
     response = client.post(
         "/appointments",

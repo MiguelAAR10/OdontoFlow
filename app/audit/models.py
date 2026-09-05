@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Identity, Index, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Identity, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,4 +30,49 @@ class AuditEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     before_state: Mapped[dict | None] = mapped_column(JSONB)
     after_state: Mapped[dict | None] = mapped_column(JSONB)
+    request_id: Mapped[str | None] = mapped_column(String(36))
     correlation_id: Mapped[str | None] = mapped_column(String(100))
+
+
+class SecurityEvent(Base):
+    """Security telemetry, including failures without a trusted tenant."""
+
+    __tablename__ = "security_events"
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('succeeded', 'failed', 'blocked')",
+            name="ck_security_events_outcome",
+        ),
+        Index("ix_security_events_occurred_at", "occurred_at"),
+        Index(
+            "ix_security_events_organization",
+            "organization_id",
+            "occurred_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "organizations.id",
+            ondelete="RESTRICT",
+            name="fk_security_events_organization",
+        )
+    )
+    principal_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "principals.id",
+            ondelete="RESTRICT",
+            name="fk_security_events_principal",
+        )
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    event_metadata: Mapped[dict] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

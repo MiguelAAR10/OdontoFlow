@@ -46,11 +46,13 @@ class AppError(Exception):
         *,
         details: dict | None = None,
         http_status: int | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.code = code
         self.message = message or DEFAULT_MESSAGE_BY_CODE[code.value]
         self.details = details or {}
         self.http_status = http_status or HTTP_STATUS_BY_CODE[code.value]
+        self.headers = headers or {}
         super().__init__(self.message)
 
 
@@ -75,6 +77,7 @@ def register_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.http_status,
             content=_error_payload(exc.code, exc.message, exc.details),
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)

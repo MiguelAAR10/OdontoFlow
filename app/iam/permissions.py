@@ -49,10 +49,20 @@ CAPABILITIES_MANAGE = "capabilities.manage"
 AVAILABILITY_READ = "availability.read"
 AVAILABILITY_MANAGE = "availability.manage"
 AUDIT_READ = "audit.read"
+MESSAGES_CREATE = "messages.create"
+DELIVERIES_CREATE = "deliveries.create"
+DELIVERIES_MANAGE = "deliveries.manage"
+CONVERSATIONS_READ = "conversations.read"
+CONTACT_APPOINTMENTS_READ = "contact_appointments.read"
+CONTACT_APPOINTMENTS_BOOK = "contact_appointments.book"
+CONTACT_APPOINTMENTS_CANCEL = "contact_appointments.cancel"
+CONTACT_APPOINTMENTS_RESCHEDULE = "contact_appointments.reschedule"
+CONTACT_PROFILES_MANAGE = "contact_profiles.manage"
+CONVERSATIONS_MANAGE = "conversations.manage"
+CONVERSATIONS_RESUME = "conversations.resume"
 
-#: The closed set seeded by PF2 (M7) — exactly the surface today's eleven
-#: endpoints need, no more. Future verticals extend it under M6; PF0 does not
-#: enumerate the whole ERP.
+#: The closed code-owned set seeded by migrations. Future verticals extend it
+#: under M6; there are no wildcard or implicit permissions.
 PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     (APPOINTMENTS_READ, "Read appointments"),
     (APPOINTMENTS_CREATE, "Book appointments"),
@@ -90,6 +100,29 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     (AVAILABILITY_READ, "Read availability"),
     (AVAILABILITY_MANAGE, "Administer availability"),
     (AUDIT_READ, "Read the audit trail"),
+    (MESSAGES_CREATE, "Ingest normalized channel messages"),
+    (DELIVERIES_CREATE, "Queue outbound channel deliveries"),
+    (DELIVERIES_MANAGE, "Claim and settle outbound deliveries"),
+    (CONVERSATIONS_READ, "Read channel conversations"),
+    (CONTACT_APPOINTMENTS_READ, "Read appointments bound to a channel contact"),
+    (
+        CONTACT_APPOINTMENTS_BOOK,
+        "Propose and confirm appointments bound to a channel contact",
+    ),
+    (
+        CONTACT_APPOINTMENTS_CANCEL,
+        "Cancel appointments bound to a channel contact",
+    ),
+    (
+        CONTACT_APPOINTMENTS_RESCHEDULE,
+        "Propose and confirm rescheduling bound to a channel contact",
+    ),
+    (CONTACT_PROFILES_MANAGE, "Manage the patient profile bound to a channel contact"),
+    (CONVERSATIONS_MANAGE, "Request and manage human conversation handoff"),
+    (
+        CONVERSATIONS_RESUME,
+        "Resume automation after a human receptionist resolves the handoff",
+    ),
 )
 
 PERMISSION_CODES: tuple[str, ...] = tuple(code for code, _name in PERMISSION_CATALOG)

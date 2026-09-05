@@ -32,6 +32,15 @@ EXPECTED_TABLES = {
     "charges",
     "payments",
     # PF7 — inventory ledger (migration 0007).
+    "integration_credentials",
+    "integration_rate_limits",
+    "security_events",
+    "channel_accounts",
+    "contact_identities",
+    "conversations",
+    "messages",
+    "outbound_messages",
+    "appointment_cancellation_proposals",
     "inventory_movements",
     "services",
     "locations",
@@ -41,10 +50,14 @@ EXPECTED_TABLES = {
     "availability_rules",
     "schedule_blocks",
     "appointments",
+    "appointment_proposals",
+    "appointment_reschedule_proposals",
+    "promotions",
+    "reception_handoffs",
     "audit_events",
 }
 
-HEAD_REVISION = "0008"
+HEAD_REVISION = "0015"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (
@@ -133,8 +146,8 @@ def test_expected_tables_and_constraints_exist(migrated_engine):
     assert constraints["excl_appointments_confirmed_no_overlap"] == "x"
     assert "ck_appointments_state" in constraints
     assert "ck_appointments_interval" in constraints
-    # 12 Vertical 1 keys + 5 plain organization keys + 12 composite tenant keys.
-    assert fk_count == 29
+    # Phase 5 adds the contact-bound patient link on appointments.
+    assert fk_count == 30
     assert {"ck_leads_acquisition_source", "ck_leads_at_least_one_contact"} <= lead_checks
     with migrated_engine.connect() as conn:
         ext = conn.execute(text("SELECT extname FROM pg_extension WHERE extname = 'btree_gist'")).scalar()
@@ -256,7 +269,9 @@ def test_upgrade_backfills_existing_rows_into_the_bootstrap_organization(
                 " FROM practitioner_memberships"
             )
         ).all() == [(1, 1, True)]
-        # Every tenant column is NOT NULL after the backfill.
+        # Every tenant-owned column is NOT NULL after the backfill.
+        # ``security_events.organization_id`` is intentionally nullable:
+        # rejected credentials have no trusted tenant to record.
         nullable = conn.execute(
             text(
                 "SELECT table_name FROM information_schema.columns"
@@ -264,7 +279,7 @@ def test_upgrade_backfills_existing_rows_into_the_bootstrap_organization(
                 " AND is_nullable = 'YES'"
             )
         ).all()
-        assert nullable == []
+        assert nullable == [("security_events",)]
         # The tenant constraints of PF0 §7.2 exist, the global name UNIQUE is gone,
         # and the practitioner-global GiST is byte-for-byte unchanged.
         constraints = {
