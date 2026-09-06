@@ -87,6 +87,7 @@ class AppointmentRead(BaseModel):
     start_utc: datetime
     end_utc: datetime
     state: str
+    patient_id: int | None = None
 
 
 class AppointmentListItem(AppointmentRead):
@@ -100,3 +101,4 @@ class AppointmentListItem(AppointmentRead):
     service_name: str
     practitioner_name: str
     location_name: str
+    patient_name: str | None = None

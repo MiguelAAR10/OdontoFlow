@@ -580,7 +580,7 @@ def test_partial_and_full_payment_and_derived_state(session):
     first = create_payment(
         session,
         charge_id,
-        type("D", (), {"amount": Decimal("50.00"), "method": "Yape"})(),
+        type("D", (), {"amount": Decimal("50.00"), "method": "yape", "reference": "pay-1"})(),
         ctx=default_context(ORG),
     )
     assert first.amount == Decimal("50.00")
@@ -593,7 +593,7 @@ def test_partial_and_full_payment_and_derived_state(session):
     second = create_payment(
         session,
         charge_id,
-        type("D", (), {"amount": Decimal("100.00"), "method": "Efectivo"})(),
+        type("D", (), {"amount": Decimal("100.00"), "method": "efectivo"})(),
         ctx=default_context(ORG),
     )
     assert second.id != first.id
@@ -620,14 +620,14 @@ def test_overpayment_rejected_deterministically(session):
     create_payment(
         session,
         charge_id,
-        type("D", (), {"amount": Decimal("100.00"), "method": "Efectivo"})(),
+        type("D", (), {"amount": Decimal("100.00"), "method": "efectivo"})(),
         ctx=default_context(ORG),
     )
     with pytest.raises(AppError) as exc:
         create_payment(
             session,
             charge_id,
-            type("D", (), {"amount": Decimal("0.01"), "method": "Efectivo"})(),
+            type("D", (), {"amount": Decimal("0.01"), "method": "efectivo"})(),
             ctx=default_context(ORG),
         )
     assert exc.value.code == ErrorCode.INVALID_INPUT
@@ -664,7 +664,7 @@ def test_concurrent_payments_never_overpay(migrated_engine, session):
             create_payment(
                 db,
                 charge_id,
-                type("D", (), {"amount": Decimal("80.00"), "method": "Yape"})(),
+                type("D", (), {"amount": Decimal("80.00"), "method": "yape", "reference": "concurrent-pay"})(),
                 ctx=default_context(ORG),
             )
             with guard:
@@ -711,7 +711,7 @@ def test_payment_tenant_isolation(session):
     create_payment(
         session,
         charge_b.id,
-        type("D", (), {"amount": Decimal("10"), "method": "Efectivo"})(),
+        type("D", (), {"amount": Decimal("10"), "method": "efectivo"})(),
         ctx=default_context(org_b),
     )
 
@@ -768,7 +768,7 @@ def test_economic_commands_enforce_permissions(session):
         create_payment(
             session,
             charge.id,
-            type("D", (), {"amount": Decimal("1"), "method": "Efectivo"})(),
+        type("D", (), {"amount": Decimal("1"), "method": "efectivo"})(),
             ctx=ctx,
         )
     assert exc.value.code.value == "PERMISSION_DENIED"
@@ -807,7 +807,7 @@ def test_audit_provenance_for_economic_creates(session):
     create_payment(
         session,
         charge.id,
-        type("D", (), {"amount": Decimal("50"), "method": "Yape"})(),
+        type("D", (), {"amount": Decimal("50"), "method": "yape", "reference": "audit-pay"})(),
         ctx=ctx,
     )
 
@@ -916,14 +916,14 @@ def test_economic_creates_are_idempotent(session):
     assert ch2.outcome["resource_id"] == str(charge_id)
     session.rollback()  # the replay read left a transaction open
 
-    payment_payload = type("D", (), {"amount": Decimal("50"), "method": "Yape"})()
+    payment_payload = type("D", (), {"amount": Decimal("50"), "method": "yape", "reference": "idem-pay"})()
     pay1 = run_idempotent_command(
         session,
         operation=create_payment,
         operation_name=OP_PAYMENTS_CREATE,
         key="econ-pay-1",
         ctx=ctx,
-        params={"charge_id": charge_id, "amount": "50", "method": "Yape"},
+        params={"charge_id": charge_id, "amount": "50", "method": "yape", "reference": "idem-pay"},
         charge_id=charge_id,
         data=payment_payload,
     )
@@ -933,7 +933,7 @@ def test_economic_creates_are_idempotent(session):
         operation_name=OP_PAYMENTS_CREATE,
         key="econ-pay-1",
         ctx=ctx,
-        params={"charge_id": charge_id, "amount": "50", "method": "Yape"},
+        params={"charge_id": charge_id, "amount": "50", "method": "yape", "reference": "idem-pay"},
         charge_id=charge_id,
         data=payment_payload,
     )
@@ -1041,7 +1041,7 @@ def test_economic_http_journey(client, session):
 
     payment = client.post(
         f"/charges/{charge_id}/payments",
-        json={"amount": "150.00", "method": "Efectivo"},
+        json={"amount": "150.00", "method": "efectivo"},
         headers={"Idempotency-Key": "http-pay-1"},
     )
     assert payment.status_code == 201, payment.text
@@ -1054,7 +1054,7 @@ def test_economic_http_journey(client, session):
 
     overpay = client.post(
         f"/charges/{charge_id}/payments",
-        json={"amount": "1.00", "method": "Efectivo"},
+        json={"amount": "1.00", "method": "efectivo"},
     )
     assert overpay.status_code == 422
     assert overpay.json()["error"]["code"] == "INVALID_INPUT"
@@ -1129,7 +1129,7 @@ def test_payments_are_append_only_at_the_orm_level(session):
     create_payment(
         session,
         charge.id,
-        type("D", (), {"amount": Decimal("50"), "method": "Efectivo"})(),
+        type("D", (), {"amount": Decimal("50"), "method": "efectivo"})(),
         ctx=default_context(ORG),
     )
     from app.economics.models import Charge as ChargeModel

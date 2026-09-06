@@ -15,15 +15,17 @@ per `.audit/clinical-core/next-economic-ops-contract.md`:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
+    Index,
     Numeric,
     String,
     UniqueConstraint,
@@ -36,6 +38,22 @@ from app.db import Base
 
 #: The declared product kinds (migration target for the legacy inferred split).
 PRODUCT_KIND_CHECK = "kind IN ('consumible', 'reventa')"
+
+PAYMENT_METHOD_CHECK = (
+    "method IN ('efectivo', 'tarjeta', 'yape', 'plin', 'transferencia', 'link_pago')"
+)
+DIGITAL_METHODS = ("yape", "plin", "transferencia")
+PAYMENT_VERIFICATION_STATUS_CHECK = "verification_status IN ('unverified', 'verified')"
+PAYMENT_VERIFIED_AT_CHECK = (
+    "(verification_status = 'unverified' AND verified_at IS NULL) OR "
+    "(verification_status = 'verified' AND verified_at IS NOT NULL)"
+)
+FOLLOW_UP_STATE_CHECK = "state IN ('open', 'closed')"
+FOLLOW_UP_CLOSE_REASON_CHECK = "close_reason IN ('settled', 'closed_by_operator')"
+FOLLOW_UP_CLOSURE_CHECK = (
+    "(state = 'open' AND closed_at IS NULL AND close_reason IS NULL) OR "
+    "(state = 'closed' AND closed_at IS NOT NULL AND close_reason IS NOT NULL)"
+)
 
 
 class Product(Base):
@@ -186,8 +204,9 @@ class Payment(Base):
     amount is positive and the sum of payments can never exceed the charge:
     the application serializes payments per charge with a row lock (one
     authoritative mutation path) and rejects overpayment deterministically.
-    ``method`` is a free validated string for now; the payment-method catalog
-    is deferred.
+    ``method`` is a closed Spanish wire-code vocabulary. Digital methods carry
+    optional historical references, while new writes are validated at the API
+    boundary and by the database check.
     """
 
     __tablename__ = "payments"
@@ -200,6 +219,15 @@ class Payment(Base):
     charge_id: Mapped[int] = mapped_column(nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     method: Mapped[str] = mapped_column(String(50), nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    receiver: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    reconciliation_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    verification_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="unverified"
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     paid_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -208,11 +236,92 @@ class Payment(Base):
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_payments_amount"),
+        CheckConstraint(PAYMENT_METHOD_CHECK, name="ck_payments_method"),
+        CheckConstraint(
+            PAYMENT_VERIFICATION_STATUS_CHECK,
+            name="ck_payments_verification_status",
+        ),
+        CheckConstraint(PAYMENT_VERIFIED_AT_CHECK, name="ck_payments_verified_at_consistency"),
+        CheckConstraint(
+            "method NOT IN ('yape', 'plin', 'transferencia') OR reference IS NOT NULL",
+            name="ck_payments_digital_reference",
+        ),
         UniqueConstraint("organization_id", "id", name="uq_payments_organization_id"),
+        Index(
+            "uq_payments_org_method_reference",
+            "organization_id",
+            "method",
+            "reference",
+            unique=True,
+            postgresql_where=text("reference IS NOT NULL"),
+        ),
         ForeignKeyConstraint(
             ["organization_id", "charge_id"],
             ["charges.organization_id", "charges.id"],
             ondelete="RESTRICT",
             name="fk_payments_organization_charge",
+        ),
+    )
+
+
+class ChargeFollowUp(Base):
+    """One open or closed collection case attached to a charge.
+
+    The promised date is an operator-entered clinic-local calendar date. It is
+    never derived from a payment instant or from charge aging, and the
+    settlement path closes an open row atomically with the final payment.
+    """
+
+    __tablename__ = "charge_follow_ups"
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "organizations.id",
+            ondelete="RESTRICT",
+            name="fk_charge_follow_ups_organization",
+        ),
+        nullable=False,
+    )
+    charge_id: Mapped[int] = mapped_column(nullable=False)
+    next_follow_up_on: Mapped[date] = mapped_column(Date, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    state: Mapped[str] = mapped_column(String(10), nullable=False, server_default="open")
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    close_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(FOLLOW_UP_STATE_CHECK, name="ck_charge_follow_ups_state"),
+        CheckConstraint(
+            FOLLOW_UP_CLOSE_REASON_CHECK,
+            name="ck_charge_follow_ups_close_reason",
+        ),
+        CheckConstraint(FOLLOW_UP_CLOSURE_CHECK, name="ck_charge_follow_ups_closure"),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_charge_follow_ups_organization_id",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "charge_id"],
+            ["charges.organization_id", "charges.id"],
+            ondelete="RESTRICT",
+            name="fk_charge_follow_ups_organization_charge",
+        ),
+        Index(
+            "uq_charge_follow_ups_org_charge_open",
+            "organization_id",
+            "charge_id",
+            unique=True,
+            postgresql_where=text("state = 'open'"),
+        ),
+        Index(
+            "ix_charge_follow_ups_org_due",
+            "organization_id",
+            "next_follow_up_on",
+            postgresql_where=text("state = 'open'"),
         ),
     )

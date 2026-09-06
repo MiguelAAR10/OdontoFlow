@@ -1,5 +1,20 @@
 # OdontoFlow Changelog
 
+## FE3A — Service-to-Cash V1 backend (2026-09-06)
+
+- Added patient-aware charge and execution projections, charge filters, the
+  uncharged-execution queue, appointment attendance uniqueness, and regenerated
+  OpenAPI contracts.
+- Added typed payment method codes with digital reconciliation metadata,
+  organization-scoped operation-reference uniqueness, one-way verification,
+  and `payments.manage` authorization.
+- Added deterministic charge collection follow-ups with clinic-local promised
+  dates, idempotent open/reschedule/close commands, active-debt filtering, and
+  atomic settlement closure from the existing payment authority.
+- Added additive migrations `0016`, `0017`, and `0018`; historical digital
+  payments remain readable through the intentionally `NOT VALID` reference
+  check.
+
 ## W4 — WF-01 Sales Agent V0 synthetic n8n loop (2026-09-05)
 
 - Added the versioned, inactive `WF-01` n8n export for synthetic `provider=test`

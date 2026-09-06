@@ -31,6 +31,8 @@ EXPECTED_TABLES = {
     "service_consumptions",
     "charges",
     "payments",
+    # FE3A — deterministic collection follow-ups (migration 0018).
+    "charge_follow_ups",
     # PF7 — inventory ledger (migration 0007).
     "integration_credentials",
     "integration_rate_limits",
@@ -57,7 +59,7 @@ EXPECTED_TABLES = {
     "audit_events",
 }
 
-HEAD_REVISION = "0015"
+HEAD_REVISION = "0018"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (

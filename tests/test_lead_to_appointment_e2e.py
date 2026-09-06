@@ -293,7 +293,7 @@ def test_lead_to_appointment_e2e_full_journey(client, session):
     body = booking.json()
     assert _slot_keys(body) == {
         "id", "lead_id", "service_id", "practitioner_id", "location_id",
-        "start_utc", "end_utc", "state",
+        "start_utc", "end_utc", "state", "patient_id",
     }
     appointment_id = body["id"]
     assert body["state"] == "confirmed"

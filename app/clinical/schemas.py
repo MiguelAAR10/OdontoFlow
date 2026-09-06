@@ -85,6 +85,10 @@ class ServiceExecutionRead(BaseModel):
     service_name: str
     executed_price: Decimal
     executed_at: datetime
+    charge_id: int | None
+    patient_id: int
+    patient_name: str
+    location_id: int
 
 
 class VisitDetailRead(VisitRead):

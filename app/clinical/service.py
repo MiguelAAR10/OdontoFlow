@@ -15,9 +15,9 @@ the executed price is a point-in-time snapshot owned by the execution row.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ from app.clinical.models import Patient, ServiceExecution, Visit
 from app.clinical.schemas import PatientCreate, ServiceExecutionCreate, VisitCreate
 from app.context import default_context
 from app.errors import AppError, ErrorCode
+from app.economics.models import Charge
 from app.iam.context import ExecutionContext
 from app.iam.permissions import (
     EXECUTIONS_CREATE,
@@ -104,6 +105,7 @@ def _visit_outcome(visit: Visit) -> dict:
 
 
 def _execution_outcome(execution: ServiceExecution) -> dict:
+    visit = execution.visit
     return {
         "status": "applied",
         "resource_type": EXECUTION_ENTITY_TYPE,
@@ -113,10 +115,30 @@ def _execution_outcome(execution: ServiceExecution) -> dict:
         "service_name": execution.service.name,
         "executed_price": str(execution.executed_price),
         "executed_at": execution.executed_at.isoformat(),
+        "charge_id": None,
+        "patient_id": visit.patient_id,
+        "patient_name": visit.patient.full_name,
+        "location_id": visit.location_id,
     }
 
 
 DUPLICATE_EXECUTION_CONSTRAINT = "uq_service_executions_org_visit_service"
+DUPLICATE_VISIT_APPOINTMENT_INDEX = "uq_visits_org_appointment"
+
+
+def _is_duplicate_visit_appointment(exc: IntegrityError) -> bool:
+    """C7-style discrimination for the FE3A attendance guard."""
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return False
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate is None:
+        diag = getattr(orig, "diag", None)
+        sqlstate = getattr(diag, "sqlstate", None) if diag is not None else None
+    if str(sqlstate) != "23505":
+        return False
+    diag = getattr(orig, "diag", None)
+    return diag is not None and getattr(diag, "constraint_name", None) == DUPLICATE_VISIT_APPOINTMENT_INDEX
 
 
 def _is_duplicate_execution(exc: IntegrityError) -> bool:
@@ -313,7 +335,18 @@ def create_visit(
             location_id=location_id,
         )
         session.add(visit)
-        session.flush()
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            # The partial unique index is the final authority under two
+            # concurrent operators.  Keep the public error stable and never
+            # leak the PostgreSQL index name through the HTTP envelope.
+            if _is_duplicate_visit_appointment(exc):
+                raise AppError(
+                    ErrorCode.INVALID_INPUT,
+                    "The appointment already has a visit.",
+                ) from exc
+            raise
 
         record_event(
             session,
@@ -375,6 +408,13 @@ def get_visit(
     )
     if visit is None:
         raise AppError(ErrorCode.NOT_FOUND, "Visit not found.")
+    # Keep the shared ServiceExecutionRead contract truthful on the visit
+    # detail path as well as on GET /executions: a charge already attached to
+    # an execution must not be rendered as ``charge_id=null`` merely because
+    # the detail endpoint reached the relationship through Visit.
+    visit._fe3a_executions = _execution_projection_rows(
+        session, org_id, visit_id=visit.id
+    )
     return visit
 
 
@@ -399,15 +439,109 @@ def list_visit_executions(
     )
     if visit is None:
         raise AppError(ErrorCode.NOT_FOUND, "Visit not found.")
-    return list(
-        session.scalars(
-            select(ServiceExecution)
-            .where(
-                ServiceExecution.organization_id == org_id,
-                ServiceExecution.visit_id == visit.id,
-            )
-            .order_by(ServiceExecution.id)
+    return _execution_projection_rows(session, org_id, visit_id=visit.id)
+
+
+def _utc_date_start(value: date) -> datetime:
+    return datetime.combine(value, time.min, tzinfo=timezone.utc)
+
+
+def _execution_projection_rows(
+    session: Session,
+    organization_id: int,
+    *,
+    visit_id: int | None = None,
+    patient_id: int | None = None,
+    charged: bool | None = None,
+    executed_from: date | None = None,
+    executed_to: date | None = None,
+) -> list[ServiceExecution]:
+    """Load execution rows and all BE-2 context in one bounded query."""
+    statement = (
+        select(ServiceExecution, Visit, Patient, Service, Charge)
+        .join(
+            Visit,
+            and_(
+                Visit.organization_id == ServiceExecution.organization_id,
+                Visit.id == ServiceExecution.visit_id,
+            ),
         )
+        .join(
+            Patient,
+            and_(
+                Patient.organization_id == Visit.organization_id,
+                Patient.id == Visit.patient_id,
+            ),
+        )
+        .join(
+            Service,
+            and_(
+                Service.organization_id == ServiceExecution.organization_id,
+                Service.id == ServiceExecution.service_id,
+            ),
+        )
+        .outerjoin(
+            Charge,
+            and_(
+                Charge.organization_id == ServiceExecution.organization_id,
+                Charge.service_execution_id == ServiceExecution.id,
+            ),
+        )
+        .where(ServiceExecution.organization_id == organization_id)
+        .order_by(ServiceExecution.executed_at.desc(), ServiceExecution.id.desc())
+    )
+    if visit_id is not None:
+        statement = statement.where(ServiceExecution.visit_id == visit_id)
+    if patient_id is not None:
+        statement = statement.where(Visit.patient_id == patient_id)
+    if charged is True:
+        statement = statement.where(Charge.id.is_not(None))
+    elif charged is False:
+        statement = statement.where(Charge.id.is_(None))
+    if executed_from is not None:
+        statement = statement.where(ServiceExecution.executed_at >= _utc_date_start(executed_from))
+    if executed_to is not None:
+        statement = statement.where(ServiceExecution.executed_at < _utc_date_start(executed_to))
+
+    executions: list[ServiceExecution] = []
+    for execution, visit, patient, service, charge in session.execute(statement).all():
+        # The ORM rows remain the service return type for compatibility.  The
+        # projection values are transient, read-only attributes consumed by the
+        # HTTP mapper and never persisted.
+        execution._fe3a_visit = visit
+        execution._fe3a_patient_id = patient.id
+        execution._fe3a_patient_name = patient.full_name
+        execution._fe3a_location_id = visit.location_id
+        execution._fe3a_charge_id = charge.id if charge is not None else None
+        execution._fe3a_service_name = service.name
+        executions.append(execution)
+    return executions
+
+
+def list_executions(
+    session: Session,
+    *,
+    ctx: ExecutionContext | None = None,
+    organization_id: int | None = None,
+    visit_id: int | None = None,
+    patient_id: int | None = None,
+    charged: bool | None = None,
+    executed_from: date | None = None,
+    executed_to: date | None = None,
+) -> list[ServiceExecution]:
+    """Operational queue of executed services, including uncharged work."""
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+    if ctx is not None:
+        require_permission(session, resolved, EXECUTIONS_READ)
+    return _execution_projection_rows(
+        session,
+        org_id,
+        visit_id=visit_id,
+        patient_id=patient_id,
+        charged=charged,
+        executed_from=executed_from,
+        executed_to=executed_to,
     )
 
 

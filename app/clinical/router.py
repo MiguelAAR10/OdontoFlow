@@ -7,7 +7,9 @@ command handler for every clinical create (C10).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, Response
+from datetime import date
+
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.clinical.schemas import (
@@ -29,6 +31,7 @@ from app.clinical.service import (
     get_patient,
     get_visit,
     list_patients,
+    list_executions,
     list_visit_executions,
     list_visits,
 )
@@ -112,23 +115,47 @@ def _execution_read_from_outcome(outcome: dict) -> ServiceExecutionRead:
         service_name=outcome["service_name"],
         executed_price=outcome["executed_price"],
         executed_at=_dt.fromisoformat(outcome["executed_at"]),
+        charge_id=outcome.get("charge_id"),
+        patient_id=outcome["patient_id"],
+        patient_name=outcome["patient_name"],
+        location_id=outcome["location_id"],
     )
 
 
 def _execution_read(execution) -> ServiceExecutionRead:
+    visit = getattr(execution, "_fe3a_visit", None) or execution.visit
+    service_name = getattr(execution, "_fe3a_service_name", None)
+    if service_name is None:
+        service_name = execution.service.name
+    patient_id = getattr(execution, "_fe3a_patient_id", None)
+    if patient_id is None:
+        patient_id = visit.patient_id
+    patient_name = getattr(execution, "_fe3a_patient_name", None)
+    if patient_name is None:
+        patient_name = visit.patient.full_name
+    location_id = getattr(execution, "_fe3a_location_id", None)
+    if location_id is None:
+        location_id = visit.location_id
     return ServiceExecutionRead(
         id=execution.id,
         visit_id=execution.visit_id,
         service_id=execution.service_id,
-        service_name=execution.service.name,
+        service_name=service_name,
         executed_price=execution.executed_price,
         executed_at=execution.executed_at,
+        charge_id=getattr(execution, "_fe3a_charge_id", None),
+        patient_id=patient_id,
+        patient_name=patient_name,
+        location_id=location_id,
     )
 
 
 def _visit_detail_read(visit) -> VisitDetailRead:
     detail = VisitDetailRead(**_visit_read(visit).model_dump(), executions=[])
-    detail.executions = [_execution_read(e) for e in visit.executions]
+    executions = getattr(visit, "_fe3a_executions", None)
+    if executions is None:
+        executions = visit.executions
+    detail.executions = [_execution_read(e) for e in executions]
     return detail
 
 
@@ -224,6 +251,35 @@ def list_visit_executions_route(
     return [
         _execution_read(e)
         for e in list_visit_executions(db, visit_id, ctx=ctx)
+    ]
+
+
+@router.get("/executions", response_model=list[ServiceExecutionRead])
+def list_executions_route(
+    request: Request,
+    db: Session = Depends(get_db),
+    visit_id: int | None = None,
+    patient_id: int | None = None,
+    charged: bool | None = None,
+    executed_from: date | None = Query(
+        default=None, description="Inclusive lower bound on ServiceExecution.executed_at."
+    ),
+    executed_to: date | None = Query(
+        default=None, description="Exclusive upper bound on ServiceExecution.executed_at."
+    ),
+) -> list[ServiceExecutionRead]:
+    ctx = resolve_http_context(request)
+    return [
+        _execution_read(e)
+        for e in list_executions(
+            db,
+            ctx=ctx,
+            visit_id=visit_id,
+            patient_id=patient_id,
+            charged=charged,
+            executed_from=executed_from,
+            executed_to=executed_to,
+        )
     ]
 
 

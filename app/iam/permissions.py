@@ -34,6 +34,10 @@ CHARGES_READ = "charges.read"
 CHARGES_CREATE = "charges.create"
 PAYMENTS_READ = "payments.read"
 PAYMENTS_CREATE = "payments.create"
+PAYMENTS_MANAGE = "payments.manage"
+FOLLOW_UPS_READ = "follow_ups.read"
+FOLLOW_UPS_CREATE = "follow_ups.create"
+FOLLOW_UPS_MANAGE = "follow_ups.manage"
 MOVEMENTS_READ = "movements.read"
 MOVEMENTS_CREATE = "movements.create"
 SERVICES_READ = "services.read"
@@ -84,6 +88,10 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     (CHARGES_CREATE, "Register charges"),
     (PAYMENTS_READ, "Read payments"),
     (PAYMENTS_CREATE, "Record payments"),
+    (PAYMENTS_MANAGE, "Verify and reconcile recorded payments"),
+    (FOLLOW_UPS_READ, "Read charge collection follow-ups"),
+    (FOLLOW_UPS_CREATE, "Open a charge collection follow-up"),
+    (FOLLOW_UPS_MANAGE, "Reschedule and close charge collection follow-ups"),
     # PF7 — Inventory ledger (movements + derived balance).
     (MOVEMENTS_READ, "Read inventory movements"),
     (MOVEMENTS_CREATE, "Record inventory movements"),

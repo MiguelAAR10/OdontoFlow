@@ -91,6 +91,7 @@ def _appointment_read_from_outcome(outcome: dict) -> AppointmentRead:
         start_utc=datetime.fromisoformat(outcome["start_utc"]),
         end_utc=datetime.fromisoformat(outcome["end_utc"]),
         state=outcome["state"],
+        patient_id=outcome.get("patient_id"),
     )
 
 
@@ -109,10 +110,12 @@ def _appointment_list_item(appointment) -> AppointmentListItem:
         start_utc=appointment.start_utc,
         end_utc=appointment.end_utc,
         state=appointment.state,
+        patient_id=appointment.patient_id,
         lead_name=appointment.lead.full_name,
         service_name=appointment.service.name,
         practitioner_name=appointment.practitioner.display_name,
         location_name=appointment.location.name,
+        patient_name=getattr(appointment, "_fe3a_patient_name", None),
     )
 
 

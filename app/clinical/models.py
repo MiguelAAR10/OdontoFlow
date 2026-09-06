@@ -124,6 +124,13 @@ class Visit(Base):
 
     __table_args__ = (
         UniqueConstraint("organization_id", "id", name="uq_visits_organization_id"),
+        Index(
+            "uq_visits_org_appointment",
+            "organization_id",
+            "appointment_id",
+            unique=True,
+            postgresql_where=text("appointment_id IS NOT NULL"),
+        ),
         ForeignKeyConstraint(
             ["organization_id", "patient_id"],
             ["patients.organization_id", "patients.id"],

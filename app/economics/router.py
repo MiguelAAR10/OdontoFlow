@@ -8,18 +8,26 @@ handler for every create (C10). Monetary reads expose derived amounts only
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.context import resolve_http_context
 from app.db import get_db
 from app.economics.schemas import (
     ChargeCreate,
+    ChargeFollowUpClose,
+    ChargeFollowUpCreate,
+    ChargeFollowUpRead,
+    ChargeFollowUpReschedule,
     ChargeRead,
     PaymentCreate,
     PaymentRead,
+    PaymentVerify,
+    PaymentMethod,
     ProductCreate,
     ProductRead,
     ServiceConsumptionCreate,
@@ -27,8 +35,12 @@ from app.economics.schemas import (
 )
 from app.economics.service import (
     OP_CHARGES_CREATE,
+    OP_FOLLOW_UPS_CLOSE,
+    OP_FOLLOW_UPS_CREATE,
+    OP_FOLLOW_UPS_RESCHEDULE,
     OP_CONSUMPTIONS_CREATE,
     OP_PAYMENTS_CREATE,
+    OP_PAYMENTS_VERIFY,
     OP_PRODUCTS_CREATE,
     charge_paid_amount,
     create_charge,
@@ -38,9 +50,16 @@ from app.economics.service import (
     get_charge,
     get_product,
     list_charges,
+    list_all_payments,
+    list_charge_follow_ups,
+    list_follow_ups,
     list_consumptions,
     list_payments,
     list_products,
+    open_follow_up,
+    reschedule_follow_up,
+    close_follow_up,
+    verify_payment,
 )
 from app.idempotency.service import run_idempotent_command
 
@@ -108,6 +127,7 @@ def _consumption_read_from_outcome(outcome: dict) -> ServiceConsumptionRead:
 
 
 def _charge_read(charge, paid: Decimal) -> ChargeRead:
+    paid = getattr(charge, "_fe3a_paid", paid)
     return ChargeRead(
         id=charge.id,
         service_execution_id=charge.service_execution_id,
@@ -115,6 +135,16 @@ def _charge_read(charge, paid: Decimal) -> ChargeRead:
         paid=paid,
         outstanding=charge.amount - paid,
         created_at=charge.created_at,
+        visit_id=charge._fe3a_visit_id,
+        patient_id=charge._fe3a_patient_id,
+        patient_name=charge._fe3a_patient_name,
+        service_id=charge._fe3a_service_id,
+        service_name=charge._fe3a_service_name,
+        location_id=charge._fe3a_location_id,
+        location_name=charge._fe3a_location_name,
+        practitioner_id=charge._fe3a_practitioner_id,
+        practitioner_name=charge._fe3a_practitioner_name,
+        executed_at=charge._fe3a_executed_at,
     )
 
 
@@ -129,6 +159,16 @@ def _charge_read_from_outcome(outcome: dict) -> ChargeRead:
         paid=Decimal("0"),
         outstanding=amount,
         created_at=_dt.fromisoformat(outcome["created_at"]),
+        visit_id=outcome["visit_id"],
+        patient_id=outcome["patient_id"],
+        patient_name=outcome["patient_name"],
+        service_id=outcome["service_id"],
+        service_name=outcome["service_name"],
+        location_id=outcome["location_id"],
+        location_name=outcome["location_name"],
+        practitioner_id=outcome["practitioner_id"],
+        practitioner_name=outcome["practitioner_name"],
+        executed_at=_dt.fromisoformat(outcome["executed_at"]),
     )
 
 
@@ -139,6 +179,11 @@ def _payment_read(payment) -> PaymentRead:
         amount=payment.amount,
         method=payment.method,
         paid_at=payment.paid_at,
+        reference=payment.reference,
+        receiver=payment.receiver,
+        reconciliation_note=payment.reconciliation_note,
+        verification_status=payment.verification_status,
+        verified_at=payment.verified_at,
     )
 
 
@@ -151,6 +196,63 @@ def _payment_read_from_outcome(outcome: dict) -> PaymentRead:
         amount=Decimal(outcome["amount"]),
         method=outcome["method"],
         paid_at=_dt.fromisoformat(outcome["paid_at"]),
+        reference=outcome.get("reference"),
+        receiver=outcome.get("receiver"),
+        reconciliation_note=outcome.get("reconciliation_note"),
+        verification_status=outcome.get("verification_status", "unverified"),
+        verified_at=(
+            _dt.fromisoformat(outcome["verified_at"])
+            if outcome.get("verified_at")
+            else None
+        ),
+    )
+
+
+def _follow_up_read(follow_up) -> ChargeFollowUpRead:
+    return ChargeFollowUpRead(
+        id=follow_up.id,
+        charge_id=follow_up.charge_id,
+        next_follow_up_on=follow_up.next_follow_up_on,
+        note=follow_up.note,
+        state=follow_up.state,
+        opened_at=follow_up.opened_at,
+        closed_at=follow_up.closed_at,
+        close_reason=follow_up.close_reason,
+        charge_amount=follow_up._fe3a_charge_amount,
+        charge_paid=follow_up._fe3a_charge_paid,
+        charge_outstanding=follow_up._fe3a_charge_outstanding,
+        is_active_case=follow_up._fe3a_is_active_case,
+        patient_id=follow_up._fe3a_patient_id,
+        patient_name=follow_up._fe3a_patient_name,
+        service_id=follow_up._fe3a_service_id,
+        service_name=follow_up._fe3a_service_name,
+        location_id=follow_up._fe3a_location_id,
+        location_name=follow_up._fe3a_location_name,
+    )
+
+
+def _follow_up_read_from_outcome(outcome: dict) -> ChargeFollowUpRead:
+    from datetime import datetime as _dt
+
+    return ChargeFollowUpRead(
+        id=int(outcome["resource_id"]),
+        charge_id=outcome["charge_id"],
+        next_follow_up_on=date.fromisoformat(outcome["next_follow_up_on"]),
+        note=outcome.get("note"),
+        state=outcome["state"],
+        opened_at=_dt.fromisoformat(outcome["opened_at"]),
+        closed_at=_dt.fromisoformat(outcome["closed_at"]) if outcome.get("closed_at") else None,
+        close_reason=outcome.get("close_reason"),
+        charge_amount=Decimal(outcome["charge_amount"]),
+        charge_paid=Decimal(outcome["charge_paid"]),
+        charge_outstanding=Decimal(outcome["charge_outstanding"]),
+        is_active_case=outcome["is_active_case"],
+        patient_id=outcome["patient_id"],
+        patient_name=outcome["patient_name"],
+        service_id=outcome["service_id"],
+        service_name=outcome["service_name"],
+        location_id=outcome["location_id"],
+        location_name=outcome["location_name"],
     )
 
 
@@ -262,10 +364,30 @@ def list_charges_route(
     request: Request,
     db: Session = Depends(get_db),
     execution_id: int | None = None,
+    patient_id: int | None = None,
+    location_id: int | None = None,
+    visit_id: int | None = None,
+    status: Literal["unpaid", "partial", "paid"] | None = None,
+    created_from: date | None = Query(
+        default=None, description="Inclusive lower bound on Charge.created_at."
+    ),
+    created_to: date | None = Query(
+        default=None, description="Exclusive upper bound on Charge.created_at."
+    ),
 ) -> list[ChargeRead]:
     ctx = resolve_http_context(request)
-    charges = list_charges(db, ctx=ctx, execution_id=execution_id)
-    return [_charge_read(c, paid=charge_paid_amount(db, c.id, ctx.organization_id)) for c in charges]
+    charges = list_charges(
+        db,
+        ctx=ctx,
+        execution_id=execution_id,
+        patient_id=patient_id,
+        location_id=location_id,
+        visit_id=visit_id,
+        status=status,
+        created_from=created_from,
+        created_to=created_to,
+    )
+    return [_charge_read(c, paid=getattr(c, "_fe3a_paid", Decimal("0"))) for c in charges]
 
 
 @router.get("/charges/{charge_id}", response_model=ChargeRead)
@@ -274,7 +396,7 @@ def get_charge_route(
 ) -> ChargeRead:
     ctx = resolve_http_context(request)
     charge = get_charge(db, charge_id, ctx=ctx)
-    return _charge_read(charge, paid=charge_paid_amount(db, charge.id, ctx.organization_id))
+    return _charge_read(charge, paid=getattr(charge, "_fe3a_paid", Decimal("0")))
 
 
 @router.post("/charges/{charge_id}/payments", response_model=PaymentRead, status_code=201)
@@ -309,3 +431,178 @@ def list_payments_route(
 ) -> list[PaymentRead]:
     ctx = resolve_http_context(request)
     return [_payment_read(p) for p in list_payments(db, charge_id, ctx=ctx)]
+
+
+@router.get("/payments", response_model=list[PaymentRead])
+def list_all_payments_route(
+    request: Request,
+    db: Session = Depends(get_db),
+    charge_id: int | None = None,
+    method: PaymentMethod | None = None,
+    verification_status: Literal["unverified", "verified"] | None = None,
+    paid_from: date | None = Query(
+        default=None, description="Inclusive lower bound on Payment.paid_at."
+    ),
+    paid_to: date | None = Query(
+        default=None, description="Exclusive upper bound on Payment.paid_at."
+    ),
+) -> list[PaymentRead]:
+    ctx = resolve_http_context(request)
+    return [
+        _payment_read(payment)
+        for payment in list_all_payments(
+            db,
+            ctx=ctx,
+            charge_id=charge_id,
+            method=method,
+            verification_status=verification_status,
+            paid_from=paid_from,
+            paid_to=paid_to,
+        )
+    ]
+
+
+@router.post("/payments/{payment_id}/verify", response_model=PaymentRead)
+def verify_payment_route(
+    payment_id: int,
+    payload: PaymentVerify,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> PaymentRead:
+    ctx = resolve_http_context(request)
+    key = _idempotency_key(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=verify_payment,
+        operation_name=OP_PAYMENTS_VERIFY,
+        key=key,
+        ctx=ctx,
+        params={"payment_id": payment_id, **payload.model_dump()},
+        payment_id=payment_id,
+        data=payload,
+    )
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+        return _payment_read_from_outcome(outcome.outcome)
+    return _payment_read(outcome.result)
+
+
+@router.post(
+    "/charges/{charge_id}/follow-ups",
+    response_model=ChargeFollowUpRead,
+    status_code=201,
+)
+def open_follow_up_route(
+    charge_id: int,
+    payload: ChargeFollowUpCreate,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> ChargeFollowUpRead:
+    ctx = resolve_http_context(request)
+    key = _idempotency_key(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=open_follow_up,
+        operation_name=OP_FOLLOW_UPS_CREATE,
+        key=key,
+        ctx=ctx,
+        params={"charge_id": charge_id, **payload.model_dump()},
+        charge_id=charge_id,
+        data=payload,
+    )
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+        return _follow_up_read_from_outcome(outcome.outcome)
+    return _follow_up_read(outcome.result)
+
+
+@router.get(
+    "/charges/{charge_id}/follow-ups",
+    response_model=list[ChargeFollowUpRead],
+)
+def list_charge_follow_ups_route(
+    charge_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> list[ChargeFollowUpRead]:
+    ctx = resolve_http_context(request)
+    return [_follow_up_read(row) for row in list_charge_follow_ups(db, charge_id, ctx=ctx)]
+
+
+@router.get("/follow-ups", response_model=list[ChargeFollowUpRead])
+def list_follow_ups_route(
+    request: Request,
+    db: Session = Depends(get_db),
+    state: Literal["open", "closed"] | None = None,
+    active: bool | None = None,
+    due_on_or_before: date | None = None,
+    patient_id: int | None = None,
+    location_id: int | None = None,
+) -> list[ChargeFollowUpRead]:
+    ctx = resolve_http_context(request)
+    return [
+        _follow_up_read(row)
+        for row in list_follow_ups(
+            db,
+            ctx=ctx,
+            state=state,
+            active=active,
+            due_on_or_before=due_on_or_before,
+            patient_id=patient_id,
+            location_id=location_id,
+        )
+    ]
+
+
+@router.post("/follow-ups/{follow_up_id}/reschedule", response_model=ChargeFollowUpRead)
+def reschedule_follow_up_route(
+    follow_up_id: int,
+    payload: ChargeFollowUpReschedule,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> ChargeFollowUpRead:
+    ctx = resolve_http_context(request)
+    key = _idempotency_key(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=reschedule_follow_up,
+        operation_name=OP_FOLLOW_UPS_RESCHEDULE,
+        key=key,
+        ctx=ctx,
+        params={"follow_up_id": follow_up_id, **payload.model_dump()},
+        follow_up_id=follow_up_id,
+        data=payload,
+    )
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+        return _follow_up_read_from_outcome(outcome.outcome)
+    return _follow_up_read(outcome.result)
+
+
+@router.post("/follow-ups/{follow_up_id}/close", response_model=ChargeFollowUpRead)
+def close_follow_up_route(
+    follow_up_id: int,
+    payload: ChargeFollowUpClose,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> ChargeFollowUpRead:
+    ctx = resolve_http_context(request)
+    key = _idempotency_key(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=close_follow_up,
+        operation_name=OP_FOLLOW_UPS_CLOSE,
+        key=key,
+        ctx=ctx,
+        params={"follow_up_id": follow_up_id, **payload.model_dump()},
+        follow_up_id=follow_up_id,
+        data=payload,
+    )
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+        return _follow_up_read_from_outcome(outcome.outcome)
+    return _follow_up_read(outcome.result)

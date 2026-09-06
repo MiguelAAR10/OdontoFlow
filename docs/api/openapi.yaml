@@ -1139,6 +1139,145 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+  /executions:
+    get:
+      summary: List Executions Route
+      operationId: list_executions_route_executions_get
+      parameters:
+      - name: visit_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Visit Id
+      - name: patient_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Patient Id
+      - name: charged
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Charged
+      - name: executed_from
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Inclusive lower bound on ServiceExecution.executed_at.
+          title: Executed From
+        description: Inclusive lower bound on ServiceExecution.executed_at.
+      - name: executed_to
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Exclusive upper bound on ServiceExecution.executed_at.
+          title: Executed To
+        description: Exclusive upper bound on ServiceExecution.executed_at.
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceExecutionRead'
+                title: Response List Executions Route Executions Get
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
   /leads:
     get:
       summary: List Leads Route
@@ -2095,6 +2234,64 @@ paths:
           - type: integer
           - type: 'null'
           title: Execution Id
+      - name: patient_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Patient Id
+      - name: location_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Location Id
+      - name: visit_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Visit Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - unpaid
+            - partial
+            - paid
+            type: string
+          - type: 'null'
+          title: Status
+      - name: created_from
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Inclusive lower bound on Charge.created_at.
+          title: Created From
+        description: Inclusive lower bound on Charge.created_at.
+      - name: created_to
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Exclusive upper bound on Charge.created_at.
+          title: Created To
+        description: Exclusive upper bound on Charge.created_at.
       - in: header
         name: X-Request-Id
         required: false
@@ -2481,6 +2678,839 @@ paths:
                 maximum: 60
         '503':
           description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /payments:
+    get:
+      summary: List All Payments Route
+      operationId: list_all_payments_route_payments_get
+      parameters:
+      - name: charge_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Charge Id
+      - name: method
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - efectivo
+            - tarjeta
+            - yape
+            - plin
+            - transferencia
+            - link_pago
+            type: string
+          - type: 'null'
+          title: Method
+      - name: verification_status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - unverified
+            - verified
+            type: string
+          - type: 'null'
+          title: Verification Status
+      - name: paid_from
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Inclusive lower bound on Payment.paid_at.
+          title: Paid From
+        description: Inclusive lower bound on Payment.paid_at.
+      - name: paid_to
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          description: Exclusive upper bound on Payment.paid_at.
+          title: Paid To
+        description: Exclusive upper bound on Payment.paid_at.
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaymentRead'
+                title: Response List All Payments Route Payments Get
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /payments/{payment_id}/verify:
+    post:
+      summary: Verify Payment Route
+      operationId: verify_payment_route_payments__payment_id__verify_post
+      parameters:
+      - name: payment_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Payment Id
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentVerify'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentRead'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '413':
+          description: The request body exceeds the configured limit.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /charges/{charge_id}/follow-ups:
+    post:
+      summary: Open Follow Up Route
+      operationId: open_follow_up_route_charges__charge_id__follow_ups_post
+      parameters:
+      - name: charge_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Charge Id
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargeFollowUpCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChargeFollowUpRead'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '413':
+          description: The request body exceeds the configured limit.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+    get:
+      summary: List Charge Follow Ups Route
+      operationId: list_charge_follow_ups_route_charges__charge_id__follow_ups_get
+      parameters:
+      - name: charge_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Charge Id
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChargeFollowUpRead'
+                title: Response List Charge Follow Ups Route Charges  Charge Id  Follow
+                  Ups Get
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /follow-ups:
+    get:
+      summary: List Follow Ups Route
+      operationId: list_follow_ups_route_follow_ups_get
+      parameters:
+      - name: state
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - open
+            - closed
+            type: string
+          - type: 'null'
+          title: State
+      - name: active
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Active
+      - name: due_on_or_before
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date
+          - type: 'null'
+          title: Due On Or Before
+      - name: patient_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Patient Id
+      - name: location_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Location Id
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChargeFollowUpRead'
+                title: Response List Follow Ups Route Follow Ups Get
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /follow-ups/{follow_up_id}/reschedule:
+    post:
+      summary: Reschedule Follow Up Route
+      operationId: reschedule_follow_up_route_follow_ups__follow_up_id__reschedule_post
+      parameters:
+      - name: follow_up_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Follow Up Id
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargeFollowUpReschedule'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChargeFollowUpRead'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '413':
+          description: The request body exceeds the configured limit.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /follow-ups/{follow_up_id}/close:
+    post:
+      summary: Close Follow Up Route
+      operationId: close_follow_up_route_follow_ups__follow_up_id__close_post
+      parameters:
+      - name: follow_up_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Follow Up Id
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargeFollowUpClose'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChargeFollowUpRead'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '413':
+          description: The request body exceeds the configured limit.
           content: *id002
           headers:
             X-Request-Id:
@@ -5511,6 +6541,11 @@ components:
         state:
           type: string
           title: State
+        patient_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Patient Id
         lead_name:
           type: string
           title: Lead Name
@@ -5523,6 +6558,11 @@ components:
         location_name:
           type: string
           title: Location Name
+        patient_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Patient Name
       type: object
       required:
       - id
@@ -5572,6 +6612,11 @@ components:
         state:
           type: string
           title: State
+        patient_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Patient Id
       type: object
       required:
       - id
@@ -5731,6 +6776,149 @@ components:
       additionalProperties: false
       type: object
       title: ChargeCreate
+    ChargeFollowUpClose:
+      properties:
+        note:
+          anyOf:
+          - type: string
+            maxLength: 500
+            minLength: 1
+          - type: 'null'
+          title: Note
+      additionalProperties: false
+      type: object
+      title: ChargeFollowUpClose
+    ChargeFollowUpCreate:
+      properties:
+        next_follow_up_on:
+          type: string
+          format: date
+          title: Next Follow Up On
+        note:
+          anyOf:
+          - type: string
+            maxLength: 500
+            minLength: 1
+          - type: 'null'
+          title: Note
+      additionalProperties: false
+      type: object
+      required:
+      - next_follow_up_on
+      title: ChargeFollowUpCreate
+    ChargeFollowUpRead:
+      properties:
+        id:
+          type: integer
+          title: Id
+        charge_id:
+          type: integer
+          title: Charge Id
+        next_follow_up_on:
+          type: string
+          format: date
+          title: Next Follow Up On
+        note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Note
+        state:
+          type: string
+          enum:
+          - open
+          - closed
+          title: State
+        opened_at:
+          type: string
+          format: date-time
+          title: Opened At
+        closed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Closed At
+        close_reason:
+          anyOf:
+          - type: string
+            enum:
+            - settled
+            - closed_by_operator
+          - type: 'null'
+          title: Close Reason
+        charge_amount:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Charge Amount
+        charge_paid:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Charge Paid
+        charge_outstanding:
+          type: string
+          pattern: ^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$
+          title: Charge Outstanding
+        is_active_case:
+          type: boolean
+          title: Is Active Case
+        patient_id:
+          type: integer
+          title: Patient Id
+        patient_name:
+          type: string
+          title: Patient Name
+        service_id:
+          type: integer
+          title: Service Id
+        service_name:
+          type: string
+          title: Service Name
+        location_id:
+          type: integer
+          title: Location Id
+        location_name:
+          type: string
+          title: Location Name
+      type: object
+      required:
+      - id
+      - charge_id
+      - next_follow_up_on
+      - note
+      - state
+      - opened_at
+      - closed_at
+      - close_reason
+      - charge_amount
+      - charge_paid
+      - charge_outstanding
+      - is_active_case
+      - patient_id
+      - patient_name
+      - service_id
+      - service_name
+      - location_id
+      - location_name
+      title: ChargeFollowUpRead
+    ChargeFollowUpReschedule:
+      properties:
+        next_follow_up_on:
+          type: string
+          format: date
+          title: Next Follow Up On
+        note:
+          anyOf:
+          - type: string
+            maxLength: 500
+            minLength: 1
+          - type: 'null'
+          title: Note
+      additionalProperties: false
+      type: object
+      required:
+      - next_follow_up_on
+      title: ChargeFollowUpReschedule
     ChargeRead:
       properties:
         id:
@@ -5755,6 +6943,37 @@ components:
           type: string
           format: date-time
           title: Created At
+        visit_id:
+          type: integer
+          title: Visit Id
+        patient_id:
+          type: integer
+          title: Patient Id
+        patient_name:
+          type: string
+          title: Patient Name
+        service_id:
+          type: integer
+          title: Service Id
+        service_name:
+          type: string
+          title: Service Name
+        location_id:
+          type: integer
+          title: Location Id
+        location_name:
+          type: string
+          title: Location Name
+        practitioner_id:
+          type: integer
+          title: Practitioner Id
+        practitioner_name:
+          type: string
+          title: Practitioner Name
+        executed_at:
+          type: string
+          format: date-time
+          title: Executed At
       type: object
       required:
       - id
@@ -5763,6 +6982,16 @@ components:
       - paid
       - outstanding
       - created_at
+      - visit_id
+      - patient_id
+      - patient_name
+      - service_id
+      - service_name
+      - location_id
+      - location_name
+      - practitioner_id
+      - practitioner_name
+      - executed_at
       title: ChargeRead
     ConversationCloseReceipt:
       properties:
@@ -6340,9 +7569,35 @@ components:
           title: Amount
         method:
           type: string
-          maxLength: 50
-          minLength: 1
+          enum:
+          - efectivo
+          - tarjeta
+          - yape
+          - plin
+          - transferencia
+          - link_pago
           title: Method
+        reference:
+          anyOf:
+          - type: string
+            maxLength: 60
+            minLength: 1
+          - type: 'null'
+          title: Reference
+        receiver:
+          anyOf:
+          - type: string
+            maxLength: 120
+            minLength: 1
+          - type: 'null'
+          title: Receiver
+        reconciliation_note:
+          anyOf:
+          - type: string
+            maxLength: 500
+            minLength: 1
+          - type: 'null'
+          title: Reconciliation Note
       additionalProperties: false
       type: object
       required:
@@ -6363,11 +7618,45 @@ components:
           title: Amount
         method:
           type: string
+          enum:
+          - efectivo
+          - tarjeta
+          - yape
+          - plin
+          - transferencia
+          - link_pago
           title: Method
         paid_at:
           type: string
           format: date-time
           title: Paid At
+        reference:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reference
+        receiver:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Receiver
+        reconciliation_note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reconciliation Note
+        verification_status:
+          type: string
+          enum:
+          - unverified
+          - verified
+          title: Verification Status
+        verified_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Verified At
       type: object
       required:
       - id
@@ -6375,7 +7664,24 @@ components:
       - amount
       - method
       - paid_at
+      - reference
+      - receiver
+      - reconciliation_note
+      - verification_status
+      - verified_at
       title: PaymentRead
+    PaymentVerify:
+      properties:
+        reconciliation_note:
+          anyOf:
+          - type: string
+            maxLength: 500
+            minLength: 1
+          - type: 'null'
+          title: Reconciliation Note
+      additionalProperties: false
+      type: object
+      title: PaymentVerify
     PractitionerCreate:
       properties:
         display_name:
@@ -6664,6 +7970,20 @@ components:
           type: string
           format: date-time
           title: Executed At
+        charge_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Charge Id
+        patient_id:
+          type: integer
+          title: Patient Id
+        patient_name:
+          type: string
+          title: Patient Name
+        location_id:
+          type: integer
+          title: Location Id
       type: object
       required:
       - id
@@ -6672,6 +7992,10 @@ components:
       - service_name
       - executed_price
       - executed_at
+      - charge_id
+      - patient_id
+      - patient_name
+      - location_id
       title: ServiceExecutionRead
     ServiceRead:
       properties:

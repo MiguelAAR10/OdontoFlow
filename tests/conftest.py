@@ -104,6 +104,7 @@ def clean_tables(migrated_engine):
             "command_receipts",
             "inventory_movements",
             "payments",
+            "charge_follow_ups",
             "charges",
             "service_consumptions",
             "products",

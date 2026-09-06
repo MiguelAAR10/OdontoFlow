@@ -33,11 +33,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.audit.service import record_event
 from app.catalog.models import Service
+from app.clinical.models import Patient
 from app.commercial.models import Lead
 from app.context import default_context
 from app.errors import AppError, ErrorCode
@@ -236,7 +237,32 @@ def list_appointments(
         statement = statement.where(Appointment.location_id == location_id)
     if practitioner_id is not None:
         statement = statement.where(Appointment.practitioner_id == practitioner_id)
-    return list(session.scalars(statement))
+    appointments = list(session.scalars(statement))
+    _attach_patient_projection(session, appointments, org_id)
+    return appointments
+
+
+def _attach_patient_projection(
+    session: Session, appointments: list[Appointment], organization_id: int
+) -> None:
+    """Attach BE-3 patient names with one tenant-qualified lookup."""
+    ids = [appointment.id for appointment in appointments if appointment.patient_id is not None]
+    names: dict[int, str] = {}
+    if ids:
+        rows = session.execute(
+            select(Appointment.id, Patient.full_name)
+            .outerjoin(
+                Patient,
+                and_(
+                    Patient.organization_id == Appointment.organization_id,
+                    Patient.id == Appointment.patient_id,
+                ),
+            )
+            .where(Appointment.organization_id == organization_id, Appointment.id.in_(ids))
+        ).all()
+        names = {appointment_id: name for appointment_id, name in rows if name is not None}
+    for appointment in appointments:
+        appointment._fe3a_patient_name = names.get(appointment.id)
 
 
 def get_appointment(
@@ -263,6 +289,7 @@ def get_appointment(
     )
     if appointment is None:
         raise AppError(ErrorCode.NOT_FOUND, "Appointment not found.")
+    _attach_patient_projection(session, [appointment], org_id)
     if ctx is not None:
         require_permission(
             session,
