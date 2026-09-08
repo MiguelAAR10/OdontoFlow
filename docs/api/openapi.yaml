@@ -5963,6 +5963,10 @@ components:
           maxLength: 4096
           minLength: 1
           title: Text
+        reception_state:
+          anyOf:
+          - $ref: '#/components/schemas/ReceptionState'
+          - type: 'null'
       additionalProperties: false
       type: object
       required:
@@ -6248,6 +6252,104 @@ components:
       - kind
       - is_active
       title: ProductRead
+    ReceptionSlot:
+      properties:
+        practitioner_id:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Practitioner Id
+        start:
+          type: string
+          format: date-time
+          title: Start
+      additionalProperties: false
+      type: object
+      required:
+      - practitioner_id
+      - start
+      title: ReceptionSlot
+    ReceptionState:
+      properties:
+        schema_version:
+          type: string
+          const: reception-state-v1
+          title: Schema Version
+        intent:
+          anyOf:
+          - type: string
+            enum:
+            - booking
+            - reschedule
+            - cancel
+          - type: 'null'
+          title: Intent
+        phase:
+          type: string
+          enum:
+          - discovery
+          - awaiting_slot
+          - awaiting_name
+          - awaiting_confirmation
+          - completed
+          - handoff
+          title: Phase
+        service_id:
+          anyOf:
+          - type: integer
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Service Id
+        location_id:
+          anyOf:
+          - type: integer
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Location Id
+        window_start:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Window Start
+        window_end:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Window End
+        offered_slots:
+          items:
+            $ref: '#/components/schemas/ReceptionSlot'
+          type: array
+          maxItems: 3
+          title: Offered Slots
+        selected_slot:
+          anyOf:
+          - $ref: '#/components/schemas/ReceptionSlot'
+          - type: 'null'
+        appointment_id:
+          anyOf:
+          - type: integer
+            exclusiveMinimum: 0.0
+          - type: 'null'
+          title: Appointment Id
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        last_message_id:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Last Message Id
+      additionalProperties: false
+      type: object
+      required:
+      - schema_version
+      - phase
+      - updated_at
+      - last_message_id
+      title: ReceptionState
+      description: Advisory task checkpoint, never an authoritative proposal or booking.
     ResumeAutomationReceipt:
       properties:
         conversation_id:

@@ -7,6 +7,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -49,8 +50,10 @@ from app.messaging.models import (
     ContactIdentity,
     Conversation,
     Message,
+    OutboundMessage,
     ReceptionHandoff,
 )
+from app.messaging.schemas import RECEPTION_STATE_PAYLOAD_KEY, ReceptionState
 from app.organization.models import Location, Organization
 from app.scheduling.availability import generate_slots
 from app.scheduling.models import (
@@ -72,6 +75,47 @@ PROPOSAL_TTL = timedelta(minutes=15)
 
 def _money(value: Decimal | None) -> str | None:
     return format(value, ".2f") if value is not None else None
+
+
+def _latest_reception_state(
+    session: Session, *, conversation_id: int, now: datetime, ctx: ExecutionContext
+) -> dict | None:
+    payload = session.scalar(
+        select(OutboundMessage.payload)
+        .join(
+            Message,
+            (Message.organization_id == OutboundMessage.organization_id)
+            & (Message.conversation_id == OutboundMessage.conversation_id)
+            & (Message.id == OutboundMessage.message_id),
+        )
+        .where(
+            OutboundMessage.organization_id == ctx.organization_id,
+            OutboundMessage.conversation_id == conversation_id,
+            OutboundMessage.payload.has_key(RECEPTION_STATE_PAYLOAD_KEY),
+            Message.direction == "outbound",
+            Message.content_expires_at > now,
+            Message.content_redacted_at.is_(None),
+        )
+        .order_by(Message.occurred_at.desc(), Message.id.desc())
+        .limit(1)
+    )
+    if payload is None:
+        return None
+    try:
+        state = ReceptionState.model_validate(payload[RECEPTION_STATE_PAYLOAD_KEY])
+    except ValidationError:
+        return None
+    source_message_id = session.scalar(
+        select(Message.id).where(
+            Message.organization_id == ctx.organization_id,
+            Message.conversation_id == conversation_id,
+            Message.id == state.last_message_id,
+            Message.direction == "inbound",
+            Message.content_expires_at > now,
+            Message.content_redacted_at.is_(None),
+        )
+    )
+    return state.model_dump(mode="json") if source_message_id is not None else None
 
 
 def reception_context(
@@ -337,6 +381,9 @@ def reception_context(
             for row in appointments
         ],
         "pending_action": pending_action,
+        "reception_state": _latest_reception_state(
+            session, conversation_id=conversation.id, now=now, ctx=ctx
+        ),
         "safety": {
             "no_diagnosis": True,
             "no_prescriptions": True,

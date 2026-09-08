@@ -90,6 +90,7 @@ def enqueue_outbound_route(
         db,
         conversation_id=conversation_id,
         text_body=payload.text,
+        reception_state=payload.reception_state,
         idempotency_key=idempotency_key,
         ctx=resolve_http_context(request),
     )

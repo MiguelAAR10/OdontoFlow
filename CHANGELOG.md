@@ -1,5 +1,18 @@
 # OdontoFlow Changelog
 
+## Reception continuity checkpoint (2026-09-05)
+
+- Added optional typed reception checkpoints to outbound creation, persisted
+  atomically with the logical message, delivery job and audit event.
+- Returned the latest visible checkpoint in reception context without changing
+  authoritative proposals, confirmation checks or handoff authorization.
+- Kept checkpoint metadata private from provider delivery, bounded and free of
+  names/tokens; retention removes it while a digest preserves idempotent replay.
+- Added PostgreSQL coverage for validation, conversation/tenant/source binding,
+  atomicity, latest-state reads, retention and provider-payload filtering.
+- Verification: 49 focused tests and 494 full-suite tests passed; the full run
+  completed in 823.73 seconds with 21 pre-existing deprecation warnings.
+
 ## n8n pilot conversation context (2026-08-30)
 
 - Extended `get_reception_context` with contact-scoped conversation state,

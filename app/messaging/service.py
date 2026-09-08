@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select, text, update
@@ -28,6 +30,9 @@ from app.messaging.schemas import (
     OutboundReceipt,
     OutboundResultCreate,
     OutboundStatusRead,
+    ReceptionState,
+    RECEPTION_STATE_FINGERPRINT_KEY,
+    RECEPTION_STATE_PAYLOAD_KEY,
 )
 
 UTC = timezone.utc
@@ -212,10 +217,21 @@ def enqueue_outbound_message(
     text_body: str,
     idempotency_key: str,
     ctx: ExecutionContext,
+    reception_state: ReceptionState | None = None,
 ) -> OutboundReceipt:
     """Atomically persist the logical message and its durable delivery job."""
     now = _now()
     retention = timedelta(days=get_settings().message_content_retention_days)
+    state_payload = (
+        reception_state.model_dump(mode="json") if reception_state is not None else None
+    )
+    state_fingerprint = (
+        hashlib.sha256(
+            json.dumps(state_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if state_payload is not None
+        else None
+    )
     with session.begin():
         require_permission(session, ctx, DELIVERIES_CREATE)
         # Serialize the organization/key pair before checking it. This avoids
@@ -234,6 +250,8 @@ def enqueue_outbound_message(
             if (
                 existing.conversation_id != conversation_id
                 or existing.payload.get("text") != text_body
+                or existing.payload.get(RECEPTION_STATE_FINGERPRINT_KEY)
+                != state_fingerprint
             ):
                 raise AppError(ErrorCode.IDEMPOTENCY_KEY_REUSED)
             return OutboundReceipt(
@@ -276,6 +294,20 @@ def enqueue_outbound_message(
         if conversation.status == "closed":
             raise AppError(ErrorCode.ENTITY_INACTIVE, "Conversation is closed.")
 
+        if reception_state is not None:
+            source_message_id = session.scalar(
+                select(Message.id).where(
+                    Message.organization_id == ctx.organization_id,
+                    Message.conversation_id == conversation.id,
+                    Message.id == reception_state.last_message_id,
+                    Message.direction == "inbound",
+                    Message.content_expires_at > now,
+                    Message.content_redacted_at.is_(None),
+                )
+            )
+            if source_message_id is None:
+                raise AppError(ErrorCode.NOT_FOUND, "Source message not found.")
+
         message = Message(
             organization_id=ctx.organization_id,
             channel_account_id=conversation.channel_account_id,
@@ -300,6 +332,11 @@ def enqueue_outbound_message(
             "text": text_body,
             "message_id": message.id,
         }
+        if state_payload is not None:
+            payload[RECEPTION_STATE_PAYLOAD_KEY] = state_payload
+            # Retain only this digest after content redaction so retries still
+            # compare the original checkpoint without resurrecting its content.
+            payload[RECEPTION_STATE_FINGERPRINT_KEY] = state_fingerprint
         outbound = OutboundMessage(
             organization_id=ctx.organization_id,
             conversation_id=conversation.id,
@@ -422,7 +459,11 @@ def claim_outbound_messages(
                     outbound_id=outbound.id,
                     conversation_id=outbound.conversation_id,
                     idempotency_key=outbound.idempotency_key,
-                    payload=outbound.payload,
+                    payload={
+                        key: value
+                        for key, value in outbound.payload.items()
+                        if not key.startswith("_")
+                    },
                     attempt_count=outbound.attempt_count,
                 )
             )
@@ -532,6 +573,12 @@ def redact_expired_message_content(
         update(Message)
         .where(Message.id.in_(ids))
         .values(body_text=None, media_reference=None, content_redacted_at=instant)
+    )
+    session.execute(
+        update(OutboundMessage)
+        .where(OutboundMessage.message_id.in_(ids))
+        .values(payload=OutboundMessage.payload.op("-")(RECEPTION_STATE_PAYLOAD_KEY))
+        .execution_options(synchronize_session="fetch")
     )
     session.commit()
     return len(ids)
