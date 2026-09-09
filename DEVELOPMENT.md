@@ -26,7 +26,8 @@ Desarrollar acá significa extender ese patrón, nunca saltárselo.
 
 ```bash
 docker start odontoflow-db-1        # PostgreSQL 15 en :5434
-.venv/bin/python -m pytest -q       # 384 deben pasar
+uv sync --locked                    # entorno reproducible desde uv.lock
+uv run python -m pytest -q          # 384 deben pasar
 ```
 
 Nunca `docker compose up` desde aquí — el nombre del proyecto compose se

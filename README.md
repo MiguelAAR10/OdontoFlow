@@ -130,29 +130,31 @@ code.
 
 ## Running locally
 
-Requirements: Docker (Compose), Python 3.12 (see `.python-version`), git.
+Requirements: Docker (Compose), [uv](https://astral.sh/uv), Python 3.12 (see `.python-version`), git.
 
 ```bash
 # 1. PostgreSQL (host port 5434 — keeps other projects untouched)
 docker compose up -d db
 
-# 2. Environment (isolated venv; pyproject.toml is the single source of truth)
-python3.12 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-cp .env.example .env   # adjust DATABASE_URL if needed
+# 2. Environment (uv.lock is the single source of truth for resolved versions)
+uv sync --locked
+cp .env.example .env.local   # adjust DATABASE_URL if needed
 
 # 3. Migrations
-.venv/bin/alembic upgrade head
+uv run alembic upgrade head
 
 # 4. API
-.venv/bin/uvicorn app:app --reload --port 8000
+uv run python -m app.run
 # → http://127.0.0.1:8000/docs   ·   http://127.0.0.1:8000/openapi.json
+
+# Verify the whole environment at once:
+./scripts/platform/doctor.sh
 ```
 
-> Dependencies are declared in `pyproject.toml` (PEP 621), never `requirements.txt`. To add one, edit
-> `pyproject.toml` and reinstall the editable; the `.venv` must be reproducible from scratch:
-> `rm -rf .venv && python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"`. Full environment
-> reference: [`ENVIRONMENT.md`](../../ENVIRONMENT.md).
+> Dependencies are declared in `pyproject.toml` (PEP 621) with `uv.lock` pinning exact resolutions —
+> never `requirements.txt`. To add one, edit `pyproject.toml` and run `uv lock && uv sync --locked`.
+> Dev-only tools live in `[dependency-groups].dev`. Full environment reference:
+> [`ENVIRONMENT.md`](../../ENVIRONMENT.md).
 
 > The test database `odontoflow_test` is created automatically by the test suite on port 5434. Ports 5432/5433 belong to other projects and are never touched.
 
@@ -162,10 +164,10 @@ cp .env.example .env   # adjust DATABASE_URL if needed
 
 ```bash
 # Full suite (real PostgreSQL — no SQLite, no mocks for DB invariants)
-.venv/bin/python -m pytest -q        # 384 tests
+uv run python -m pytest -q        # 384 tests
 
 # Focused
-.venv/bin/python -m pytest tests/test_inventory_location.py tests/test_migrations.py -q
+uv run python -m pytest tests/test_inventory_location.py tests/test_migrations.py -q
 ```
 
 The suite covers: migrations upgrade/downgrade/re-upgrade cycles, GiST overlap rejection with real races
