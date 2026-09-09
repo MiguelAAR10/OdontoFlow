@@ -1,0 +1,15 @@
+# Project-scoped MCP servers for trusted OdontoFlow backend work.
+
+[mcp_servers.supabase-core]
+url = "https://mcp.supabase.com/mcp?project_ref=oicmhdloqfymmunjaeru&features=database,debugging,docs"
+bearer_token_env_var = "SUPABASE_ACCESS_TOKEN"
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.supabase-agent]
+url = "https://mcp.supabase.com/mcp?project_ref=odontoflow-agent-dev&read_only=true&features=database,docs"
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.n8n]
+url = "https://ariaslizares1017.app.n8n.cloud/mcp-server/http"
+bearer_token_env_var = "N8N_MCP_TOKEN"
+default_tools_approval_mode = "writes"

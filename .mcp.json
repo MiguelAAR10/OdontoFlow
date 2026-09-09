@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "supabase-core": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=odontoflow-core-dev&read_only=true&features=database,docs"
+    },
+    "supabase-agent": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=odontoflow-agent-dev&read_only=true&features=database,docs"
+    },
+    "n8n": {
+      "type": "http",
+      "url": "https://ariaslizares1017.app.n8n.cloud/mcp-server/http",
+      "headers": {
+        "Authorization": "Bearer ${N8N_MCP_TOKEN}"
+      }
+    }
+  }
+}
