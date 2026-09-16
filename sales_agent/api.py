@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Security
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials
 
+from app.config import get_settings as get_backend_settings
+from app.context import INTEGRATION_BEARER, require_authenticated_context
+from app.db import SessionLocal
+from app.errors import AppError, register_error_handlers
+from app.http_security import SecurityBoundaryMiddleware, install_security_openapi
+from app.iam.credentials import authentication_required
+from app.iam.permissions import CONVERSATIONS_READ
+from app.iam.service import (
+    PERMISSION_DENIED_HTTP_STATUS,
+    PERMISSION_DENIED_MESSAGE,
+    IamErrorCode,
+    require_permission,
+)
 from sales_agent.config import AgentSettings, get_settings
 from sales_agent.schemas import (
     AgentUnavailableError,
@@ -14,6 +29,63 @@ from sales_agent.schemas import (
     SalesAgentTurnRequest,
     SalesAgentTurnResponse,
 )
+
+
+def _configured_service_credential(request: Request) -> str | None:
+    """Return the one server-configured identity allowed to run this process.
+
+    The caller is still authenticated by PostgreSQL through
+    ``require_authenticated_context``. This additional binding prevents a
+    credential from another tenant from driving a runtime whose backend
+    gateway is configured for this process's tenant. If an injected runtime
+    and settings disagree, fail closed rather than choosing one identity.
+    """
+    active_settings = getattr(request.app.state, "sales_agent_settings", None)
+    if active_settings is None:
+        active_settings = get_settings()
+    configured = active_settings.backend_credential
+
+    runtime = getattr(request.app.state, "sales_agent_runtime", None)
+    gateway = getattr(runtime, "gateway", None)
+    if gateway is not None:
+        runtime_credential = getattr(gateway, "credential", None)
+        if not isinstance(runtime_credential, str) or not runtime_credential.strip():
+            return None
+        if configured is not None and not secrets.compare_digest(
+            configured, runtime_credential
+        ):
+            return None
+        configured = runtime_credential
+
+    return configured if isinstance(configured, str) and configured.strip() else None
+
+
+def _authorize_sales_agent_turn(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Security(INTEGRATION_BEARER),
+) -> None:
+    """Authorize the configured agent service before the runtime is invoked."""
+    context = getattr(request.state, "execution_context", None)
+    configured = _configured_service_credential(request)
+    if (
+        context is None
+        or credentials is None
+        or configured is None
+        or not secrets.compare_digest(credentials.credentials, configured)
+    ):
+        raise authentication_required()
+
+    if context.principal_type != "agent":
+        raise AppError(
+            IamErrorCode.PERMISSION_DENIED,
+            PERMISSION_DENIED_MESSAGE,
+            details={},
+            http_status=PERMISSION_DENIED_HTTP_STATUS,
+        )
+
+    maker = getattr(request.app.state, "auth_sessionmaker", None) or SessionLocal
+    with maker() as session:
+        require_permission(session, context, CONVERSATIONS_READ)
 
 
 def _error_response(code: str, message: str, status_code: int) -> JSONResponse:
@@ -51,10 +123,21 @@ def _build_runtime(settings: AgentSettings):
 def create_app(*, runtime: Any | None = None, settings: AgentSettings | None = None) -> FastAPI:
     """Create the Sales Agent HTTP process app with injectable runtime seams."""
     app = FastAPI(title="OdontoFlow Sales Agent", version="0.1.0")
+    security_settings = get_backend_settings()
+    app.state.security_settings = security_settings
     app.state.sales_agent_runtime = runtime
     app.state.sales_agent_settings = settings
+    register_error_handlers(app)
+    app.add_middleware(SecurityBoundaryMiddleware, settings=security_settings)
 
-    @app.post("/sales-agent/turn", response_model=SalesAgentTurnResponse)
+    @app.post(
+        "/sales-agent/turn",
+        response_model=SalesAgentTurnResponse,
+        dependencies=[
+            Depends(require_authenticated_context),
+            Depends(_authorize_sales_agent_turn),
+        ],
+    )
     def sales_agent_turn(payload: SalesAgentTurnRequest, request: Request):
         active_runtime = getattr(request.app.state, "sales_agent_runtime", None)
         if active_runtime is None:
@@ -93,6 +176,7 @@ def create_app(*, runtime: Any | None = None, settings: AgentSettings | None = N
                 503,
             )
 
+    install_security_openapi(app)
     return app
 
 

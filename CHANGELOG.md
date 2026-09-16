@@ -1,5 +1,15 @@
 # OdontoFlow Changelog
 
+## AGENT-TURN-AUTH-01 — Secure Sales Agent entrypoint (2026-09-16)
+
+- Secured `POST /sales-agent/turn` with the existing PostgreSQL-backed bearer
+  authentication and permission boundary; only the configured `agent`
+  principal can invoke the runtime, with tenant binding and fail-closed
+  configuration mismatch handling.
+- Updated the WF-01 runner/export to forward the existing agent credential and
+  added real-PostgreSQL positive/negative entrypoint coverage. Booking remains
+  fail closed for unverified patient acceptance.
+
 ## LOCAL-RUNTIME-SMOKE-01 — Reproducible local Lead-to-Appointment smoke (2026-09-16)
 
 - Documented the smallest local smoke path for the existing PostgreSQL CORE,

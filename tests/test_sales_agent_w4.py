@@ -433,6 +433,13 @@ def test_wf01_export_keeps_http_order_and_retries_transport_only() -> None:
         header for header in outbound_headers if header["name"] == "Idempotency-Key"
     )
     assert "outbound_idempotency_key" in outbound_key_header["value"]
+    turn_headers = nodes["Call Sales Agent turn"]["parameters"][
+        "headerParameters"
+    ]["parameters"]
+    turn_auth_header = next(
+        header for header in turn_headers if header["name"] == "Authorization"
+    )
+    assert "ODONTOFLOW_AGENT_TOKEN" in turn_auth_header["value"]
 
 
 def test_transport_retry_reuses_the_same_event_identity() -> None:
@@ -655,6 +662,7 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
                 checkpointer=memory.checkpointer,
             )
             sales_app = create_sales_agent_app(runtime=runtime)
+            sales_app.state.auth_sessionmaker = maker
             with TestClient(sales_app) as sales_client:
 
                 def execute(event):
@@ -844,6 +852,7 @@ def test_wf01_rejects_same_turn_model_propose_then_confirm(
                 checkpointer=memory.checkpointer,
             )
             sales_app = create_sales_agent_app(runtime=runtime)
+            sales_app.state.auth_sessionmaker = maker
             with TestClient(sales_app) as sales_client:
                 result = WF01Runner(
                     backend_client=recording_backend,
@@ -950,6 +959,7 @@ def test_wf01_rejects_negative_later_message_before_booking(
                 checkpointer=memory.checkpointer,
             )
             sales_app = create_sales_agent_app(runtime=runtime)
+            sales_app.state.auth_sessionmaker = maker
             with TestClient(sales_app) as sales_client:
 
                 def execute(event):

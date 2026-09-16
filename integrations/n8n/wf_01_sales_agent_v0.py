@@ -361,6 +361,7 @@ class WF01Runner:
                 "latest_inbound_message_id": latest_message_id,
             },
             headers={
+                "Authorization": f"Bearer {self.agent_token}",
                 "X-Request-Id": str(uuid4()),
                 "X-Correlation-Id": str(uuid4()),
             },

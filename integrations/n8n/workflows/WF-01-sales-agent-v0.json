@@ -193,6 +193,10 @@
         "headerParameters": {
           "parameters": [
             {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.ODONTOFLOW_AGENT_TOKEN }}"
+            },
+            {
               "name": "X-Request-Id",
               "value": "={{$json.request_id ?? crypto.randomUUID()}}"
             },

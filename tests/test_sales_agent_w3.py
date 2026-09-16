@@ -614,36 +614,28 @@ def test_tool_gateway_failure_is_counted_without_exposing_tool_details() -> None
     assert "secret-tool-id" not in json.dumps(telemetry[0])
 
 
-def test_sales_agent_turn_api_has_typed_input_and_output_without_optional_imports() -> None:
+def test_sales_agent_turn_api_rejects_anonymous_calls_without_optional_imports() -> None:
     from fastapi.testclient import TestClient
 
     from sales_agent.api import create_app
-    from sales_agent.schemas import SalesAgentTurnResponse
 
     class StubRuntime:
-        def turn(self, request):
-            return SalesAgentTurnResponse(
-                conversation_id=request.conversation_id,
-                latest_inbound_message_id=request.latest_inbound_message_id,
-                reply="Synthetic reply",
-                outcome="continue",
-                handoff=False,
-            )
+        calls = 0
 
-    with TestClient(create_app(runtime=StubRuntime())) as client:
+        def turn(self, request):
+            self.calls += 1
+            raise AssertionError("anonymous request reached the agent runtime")
+
+    runtime = StubRuntime()
+    with TestClient(create_app(runtime=runtime)) as client:
         response = client.post(
             "/sales-agent/turn",
             json={"conversation_id": 7, "latest_inbound_message_id": 8},
         )
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "conversation_id": 7,
-        "latest_inbound_message_id": 8,
-        "reply": "Synthetic reply",
-        "outcome": "continue",
-        "handoff": False,
-    }
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+    assert runtime.calls == 0
 
 
 def test_agent_database_url_cannot_be_canonical() -> None:

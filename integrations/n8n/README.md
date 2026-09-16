@@ -16,7 +16,11 @@ Credentials are supplied at runtime through private n8n environment/credential
 configuration (`ODONTOFLOW_BASE_URL`, `SALES_AGENT_BASE_URL`,
 `ODONTOFLOW_INBOUND_TOKEN`, and `ODONTOFLOW_AGENT_TOKEN`). No token is embedded
 in the export. The agent token must be provisioned with the `sales-agent-v0`
-profile from `scripts/bootstrap_n8n_lab.py`.
+profile from `scripts/bootstrap_n8n_lab.py` and must be the same server-issued
+credential configured as `SALES_AGENT_V0_CREDENTIAL` for the Sales Agent
+process. The Sales Agent entrypoint authenticates that credential before
+running a turn; the backend independently re-checks its permissions on every
+tool call.
 
 The debounce store is intentionally process-local and bounded for this POC. A
 restart loses buffered events, and concurrent n8n workers do not share a
