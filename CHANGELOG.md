@@ -1,5 +1,18 @@
 # OdontoFlow Changelog
 
+## SANDBOX-INBOUND-01 — Controlled end-to-end sandbox loop (2026-09-16)
+
+- Added the development-only `SandboxInboundSender`, which strictly accepts
+  `provider=sandbox` events and drives the existing authenticated canonical
+  inbound, Sales Agent turn, and outbound persistence contracts in order.
+- Added a real-PostgreSQL fake-model regression for one inbound → proposal →
+  fail-closed confirmation attempt → sandbox outbound → loopback receipt flow;
+  replay, missing/invalid credentials, cross-tenant access, and provider
+  isolation remain covered without creating an appointment.
+- Reused the existing server-issued `n8n-inbound`, `sales-agent-v0`, and
+  `outbound-dispatcher` profiles. No channel framework, consent mechanism,
+  live provider, paid model, or production write was added.
+
 ## SANDBOX-OUTBOUND-02 — First-class local sandbox delivery (2026-09-16)
 
 - Added the development-only `sandbox` channel provider through additive
