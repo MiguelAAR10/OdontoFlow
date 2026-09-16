@@ -331,6 +331,13 @@ def confirm_contact_booking_proposal(
             proposal_created_at=proposal.created_at,
             ctx=ctx,
         )
+        # The principal type is resolved from the authenticated credential;
+        # a later inbound message is not itself verified patient acceptance.
+        if ctx.principal_type == "agent":
+            raise AppError(
+                ErrorCode.INVALID_INPUT,
+                "Automatic appointment confirmation requires verified patient acceptance.",
+            )
 
         appointment = _book_appointment_core(
             session,

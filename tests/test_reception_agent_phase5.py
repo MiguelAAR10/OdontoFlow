@@ -472,7 +472,7 @@ def test_register_contact_profile_is_idempotent_and_contact_bound(client, sessio
     assert session.scalar(select(func.count()).select_from(Patient)) == 1
 
 
-def test_sales_agent_v0_books_but_cannot_use_dormant_permissions(client, session):
+def test_sales_agent_v0_cannot_confirm_or_use_dormant_permissions(client, session):
     from app.iam.credentials import issue_credential
     from scripts.issue_credential import _assign_profile, _resolve_principal
 
@@ -527,8 +527,23 @@ def test_sales_agent_v0_books_but_cannot_use_dormant_permissions(client, session
         auth_headers=agent_headers,
     )
     assert confirmed.status_code == 200, confirmed.text
-    assert confirmed.json()["status"] == "success", confirmed.text
-    appointment_id = confirmed.json()["data"]["appointment"]["id"]
+    assert confirmed.json()["status"] == "error", confirmed.text
+    assert confirmed.json()["error"]["code"] == "INVALID_INPUT", confirmed.text
+    assert session.scalar(select(func.count()).select_from(Appointment)) == 0
+    assert session.get(AppointmentProposal, proposal["id"]).status == "pending"
+
+    operator_confirmed = _call(
+        client,
+        conversation_id=seeded["conversation"].id,
+        tool_name="confirm_appointment",
+        arguments={
+            "proposal_id": proposal["id"],
+            "confirmation_token": proposal["confirmation_token"],
+        },
+    )
+    assert operator_confirmed.status_code == 200, operator_confirmed.text
+    assert operator_confirmed.json()["status"] == "success", operator_confirmed.text
+    appointment_id = operator_confirmed.json()["data"]["appointment"]["id"]
 
     forbidden_tools = (
         (

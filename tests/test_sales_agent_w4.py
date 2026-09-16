@@ -41,6 +41,25 @@ def w4_agent_database_url():
     server_engine.dispose()
 
 
+@pytest.fixture
+def negative_agent_database_url():
+    from conftest import TEST_DATABASE_URL
+
+    database_name = f"odonto_w4_negative_{os.getpid()}_{uuid4().hex[:8]}"
+    server_url = make_url(TEST_DATABASE_URL).set(database="odontoflow")
+    server_engine = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    with server_engine.connect() as connection:
+        connection.execute(text(f'CREATE DATABASE "{database_name}"'))
+    server_engine.dispose()
+    yield make_url(TEST_DATABASE_URL).set(database=database_name).render_as_string(
+        hide_password=False
+    )
+    server_engine = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    with server_engine.connect() as connection:
+        connection.execute(text(f'DROP DATABASE IF EXISTS "{database_name}"'))
+    server_engine.dispose()
+
+
 def _synthetic_event(message_id: str, contact_id: str, text_value: str) -> dict[str, str]:
     return {
         "message_id": message_id,
@@ -54,7 +73,10 @@ def _synthetic_event(message_id: str, contact_id: str, text_value: str) -> dict[
 
 
 def _scenario_model(
-    observed: dict[str, Any], *, same_turn_confirmation: bool = False
+    observed: dict[str, Any],
+    *,
+    same_turn_confirmation: bool = False,
+    force_confirmation: bool = False,
 ):
     from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
     from langchain_core.messages import AIMessage
@@ -189,6 +211,34 @@ def _scenario_model(
 
                 return ChatResult(generations=[ChatGeneration(message=message)])
 
+            if force_confirmation and turn == 3:
+                if not tool_messages:
+                    message = self._call("get_reception_context", {}, sequence)
+                elif last_tool == "get_reception_context":
+                    context = self._decode_tool_message(tool_messages[-1]) or {}
+                    pending = (context.get("data", {}) or {}).get("pending_action")
+                    assert pending and pending["action_type"] == "BOOK"
+                    message = self._call(
+                        "confirm_appointment",
+                        {
+                            "proposal_id": pending["proposal_id"],
+                            "confirmation_token": pending["confirmation_token"],
+                        },
+                        sequence,
+                    )
+                elif last_tool == "confirm_appointment":
+                    result = self._decode_tool_message(tool_messages[-1]) or {}
+                    if result.get("status") == "error":
+                        message = self._response(
+                            "Quedo pendiente de una confirmación posterior.", "proposed"
+                        )
+                    else:
+                        message = self._response("Tu cita quedó confirmada.", "confirmed")
+                else:
+                    raise AssertionError(f"unexpected forced tool: {last_tool}")
+
+                return ChatResult(generations=[ChatGeneration(message=message)])
+
             if turn in {1, 4}:
                 if not tool_messages:
                     return ChatResult(
@@ -288,12 +338,16 @@ def _scenario_model(
                         sequence,
                     )
                 else:
-                    appointment = (self._decode_tool_message(tool_messages[-1]) or {}).get(
-                        "data", {}
-                    ).get("appointment")
-                    assert appointment
-                    observed.setdefault("appointments", []).append(appointment)
-                    message = self._response("Tu cita quedó confirmada.", "confirmed")
+                    result = self._decode_tool_message(tool_messages[-1]) or {}
+                    if result.get("status") == "error":
+                        message = self._response(
+                            "Quedo pendiente de una confirmación posterior.", "proposed"
+                        )
+                    else:
+                        appointment = result.get("data", {}).get("appointment")
+                        assert appointment
+                        observed.setdefault("appointments", []).append(appointment)
+                        message = self._response("Tu cita quedó confirmada.", "confirmed")
             else:
                 message = self._response("Puedo seguir ayudándote.", "continue")
 
@@ -623,7 +677,7 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
                     _synthetic_event("a-3", "contact-a", "Yes confirm A")
                 )
                 with migrated_engine.connect() as check:
-                    assert check.execute(text("SELECT count(*) FROM appointments")).scalar_one() == 1
+                    assert check.execute(text("SELECT count(*) FROM appointments")).scalar_one() == 0
 
                 b1 = execute(
                     _synthetic_event("b-1", "contact-b", "request cleaning B")
@@ -641,11 +695,12 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
 
     assert a1 is not None and a1.agent_response["outcome"] == "continue"
     assert a2 is not None and a2.agent_response["outcome"] == "proposed"
-    assert a3 is not None and a3.agent_response["outcome"] == "confirmed"
+    assert a3 is not None and a3.agent_response["outcome"] == "proposed"
     assert a4 is not None and a4.agent_response["outcome"] == "continue"
     assert duplicate is not None and duplicate.duplicate is True
     assert duplicate.agent_response is None
     assert b1 is not None and b2 is not None and b3 is not None
+    assert b3.agent_response["outcome"] == "proposed"
     assert a1.conversation_id == a2.conversation_id == a3.conversation_id == a4.conversation_id
     assert b1.conversation_id == b2.conversation_id == b3.conversation_id
     assert a1.conversation_id != b1.conversation_id
@@ -706,16 +761,27 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
             text("SELECT start_utc FROM appointments ORDER BY id")
         ).all()
     ]
+    proposal_starts = [
+        row[0]
+        for row in session.execute(
+            text(
+                "SELECT start_utc FROM appointment_proposals "
+                "WHERE status = 'pending' ORDER BY id"
+            )
+        ).all()
+    ]
     observed_starts = [
         datetime.fromisoformat(slot["start"].replace("Z", "+00:00"))
         for slot in observed["slots"]
     ]
-    assert appointment_starts == observed_starts
+    assert appointment_starts == []
+    assert proposal_starts == observed_starts
 
     assert session.execute(text("SELECT count(*) FROM messages WHERE direction='inbound'")).scalar_one() == 7
     assert session.execute(text("SELECT count(*) FROM messages WHERE direction='outbound'")).scalar_one() == 7
-    assert session.execute(text("SELECT count(*) FROM appointments")).scalar_one() == 2
-    assert session.execute(text("SELECT count(*) FROM appointment_proposals WHERE status='confirmed'")).scalar_one() == 2
+    assert session.execute(text("SELECT count(*) FROM appointments")).scalar_one() == 0
+    assert session.execute(text("SELECT count(*) FROM appointment_proposals WHERE status='pending'")).scalar_one() == 2
+    assert session.execute(text("SELECT count(*) FROM appointment_proposals WHERE status='confirmed'")).scalar_one() == 0
 
 
 @pytest.mark.skipif(
@@ -822,6 +888,124 @@ def test_wf01_rejects_same_turn_model_propose_then_confirm(
         ).scalar_one()
         == 1
     )
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("langchain") is None
+    or importlib.util.find_spec("langgraph") is None,
+    reason="Negative confirmation regression runs in the optional sales-agent dependency job",
+)
+def test_wf01_rejects_negative_later_message_before_booking(
+    migrated_engine, session, negative_agent_database_url
+) -> None:
+    from conftest import AUTH_HEADERS
+    from fastapi.testclient import TestClient
+
+    from app import create_app
+    from app.db import get_db
+    from integrations.n8n.wf_01_sales_agent_v0 import WF01Runner
+    from sales_agent.api import create_app as create_sales_agent_app
+    from sales_agent.gateway import BackendGateway
+    from sales_agent.memory import PostgresAgentMemory
+    from sales_agent.runtime import SalesAgentRuntime
+    from scripts.bootstrap_n8n_lab import provision_n8n_lab
+
+    config = provision_n8n_lab(session, organization_id=1)
+    session.commit()
+    maker = sessionmaker(bind=migrated_engine, autoflush=False, expire_on_commit=False)
+    backend_app = create_app()
+
+    def _db():
+        db = maker()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    backend_app.dependency_overrides[get_db] = _db
+    backend_app.state.auth_sessionmaker = maker
+    observed: dict[str, Any] = {}
+    model = _scenario_model(observed, force_confirmation=True)
+
+    class RecordingClient:
+        def __init__(self, client):
+            self.client = client
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def post(self, url, **kwargs):
+            self.calls.append((str(url), dict(kwargs.get("json", {}))))
+            return self.client.post(url, **kwargs)
+
+    with TestClient(backend_app, headers=AUTH_HEADERS) as raw_backend:
+        recording_backend = RecordingClient(raw_backend)
+        gateway = BackendGateway(
+            "http://testserver",
+            config["ODONTOFLOW_AGENT_TOKEN"],
+            http_client=recording_backend,
+        )
+        with PostgresAgentMemory.open(negative_agent_database_url, setup=True) as memory:
+            runtime = SalesAgentRuntime(
+                gateway=gateway,
+                model=model,
+                checkpointer=memory.checkpointer,
+            )
+            sales_app = create_sales_agent_app(runtime=runtime)
+            with TestClient(sales_app) as sales_client:
+
+                def execute(event):
+                    return WF01Runner(
+                        backend_client=recording_backend,
+                        sales_agent_client=sales_client,
+                        inbound_token=config["ODONTOFLOW_INBOUND_TOKEN"],
+                        agent_token=config["ODONTOFLOW_AGENT_TOKEN"],
+                    ).execute(event)
+
+                first = execute(
+                    _synthetic_event(
+                        "negative-1", "contact-a", "request cleaning"
+                    )
+                )
+                proposal_turn = execute(
+                    _synthetic_event("negative-2", "contact-a", "Lince Monday")
+                )
+                negative = execute(
+                    _synthetic_event("negative-3", "contact-a", "No, thanks")
+                )
+
+    assert first is not None and first.agent_response["outcome"] == "continue"
+    assert proposal_turn is not None and proposal_turn.agent_response["outcome"] == "proposed"
+    assert negative is not None
+    tool_calls = [
+        payload["tool_name"]
+        for path, payload in recording_backend.calls
+        if path == "/agent-tools/call"
+    ]
+    assert "confirm_appointment" in tool_calls
+    session.expire_all()
+    persisted_negative = session.execute(
+        text("SELECT body_text FROM messages WHERE provider_message_id = 'negative-3'")
+    ).scalar_one()
+    appointment_count = session.execute(text("SELECT count(*) FROM appointments")).scalar_one()
+    pending_proposal_count = session.execute(
+        text("SELECT count(*) FROM appointment_proposals WHERE status = 'pending'")
+    ).scalar_one()
+    confirmation_error_count = session.execute(
+        text(
+            "SELECT count(*) FROM audit_events "
+            "WHERE entity_type = 'agent_tool' "
+            "AND action = 'agent_tool.called' "
+            "AND after_state->>'tool_name' = 'confirm_appointment' "
+            "AND after_state->>'status' = 'error' "
+            "AND after_state->>'error_code' = 'INVALID_INPUT'"
+        )
+    ).scalar_one()
+    assert persisted_negative == "No, thanks"
+    assert (
+        negative.agent_response["outcome"],
+        appointment_count,
+        pending_proposal_count,
+        confirmation_error_count,
+    ) == ("proposed", 0, 1, 1)
 
 
 def test_wf01_handoff_blocks_agent_tool_automation(

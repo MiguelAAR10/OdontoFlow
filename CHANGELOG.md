@@ -1,5 +1,16 @@
 # OdontoFlow Changelog
 
+## AGENT-CONFIRM-FAIL-CLOSED-03 — Fail closed for unverified agent confirmation (2026-09-16)
+
+- Agent principals can no longer consume a pending appointment proposal into a
+  confirmed appointment when the only evidence is a later inbound message;
+  the command returns `INVALID_INPUT`, leaves the proposal pending, and keeps
+  the audit/error path intact.
+- Preserved authenticated human confirmation, the temporal guard, proposal
+  token/conversation isolation, expiry, idempotent replay, and exactly-one
+  appointment behavior. Automatic agent booking now awaits a verified,
+  proposal-bound patient acceptance mechanism.
+
 ## AGENT-CONFIRM-GUARD-01 — Enforce patient confirmation (2026-09-16)
 
 - Booking proposal confirmation now requires authoritative persisted evidence of
