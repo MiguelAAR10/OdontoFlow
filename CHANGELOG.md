@@ -1,5 +1,14 @@
 # OdontoFlow Changelog
 
+## LOCAL-RUNTIME-SMOKE-01 — Reproducible local Lead-to-Appointment smoke (2026-09-16)
+
+- Documented the smallest local smoke path for the existing PostgreSQL CORE,
+  FastAPI, and fake-model Sales Agent harness using explicit local database
+  settings; no paid model or live channel is required.
+- Captured the safe pending-proposal/zero-appointment result, negative-response
+  fail-closed result, and the current `provider=test` outbound persistence
+  boundary. No dispatcher was added.
+
 ## AGENT-CONFIRM-FAIL-CLOSED-03 — Fail closed for unverified agent confirmation (2026-09-16)
 
 - Agent principals can no longer consume a pending appointment proposal into a
