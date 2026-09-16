@@ -42,6 +42,7 @@ EXPECTED_TABLES = {
     "conversations",
     "messages",
     "outbound_messages",
+    "sandbox_delivery_receipts",
     "appointment_cancellation_proposals",
     "inventory_movements",
     "services",
@@ -59,7 +60,7 @@ EXPECTED_TABLES = {
     "audit_events",
 }
 
-HEAD_REVISION = "0018"
+HEAD_REVISION = "0019"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (

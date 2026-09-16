@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select, text, update
@@ -27,15 +29,18 @@ from app.messaging.models import (
     Conversation,
     Message,
     OutboundMessage,
+    SandboxDeliveryReceipt,
 )
 from app.messaging.schemas import (
+    ConversationStatus,
     InboundMessageCreate,
     InboundReceipt,
     OutboundDispatchItem,
     OutboundReceipt,
     OutboundResultCreate,
     OutboundStatusRead,
-    ConversationStatus,
+    SandboxDeliveryReceiptRead,
+    SandboxOutboundPayload,
 )
 
 UTC = timezone.utc
@@ -44,6 +49,7 @@ PROCESSING_LEASE = timedelta(minutes=5)
 CONVERSATION_STATUSES = frozenset(
     {"open", "awaiting_confirmation", "human_handoff", "closed"}
 )
+DISPATCHABLE_PROVIDERS = frozenset({"whatsapp", "sandbox"})
 MAX_CONVERSATION_LIST_LIMIT = 100
 
 
@@ -441,9 +447,12 @@ def claim_outbound_messages(
     session: Session,
     *,
     limit: int,
+    provider: str | None = None,
     ctx: ExecutionContext,
 ) -> list[OutboundDispatchItem]:
     """Lease due rows with ``SKIP LOCKED`` so multiple workers never duplicate a claim."""
+    if provider is not None and provider not in DISPATCHABLE_PROVIDERS:
+        raise AppError(ErrorCode.INVALID_INPUT, "The outbound provider is not dispatchable.")
     now = _now()
     with session.begin():
         require_permission(session, ctx, DELIVERIES_MANAGE)
@@ -482,9 +491,8 @@ def claim_outbound_messages(
                 },
             )
 
-        due = list(
-            session.scalars(
-                select(OutboundMessage)
+        due_statement = (
+            select(OutboundMessage)
                 .join(
                     Conversation,
                     and_(
@@ -503,7 +511,7 @@ def claim_outbound_messages(
                 )
                 .where(
                     OutboundMessage.organization_id == ctx.organization_id,
-                    ChannelAccount.provider != "test",
+                    ChannelAccount.provider.in_(DISPATCHABLE_PROVIDERS),
                     OutboundMessage.next_attempt_at <= now,
                     or_(
                         OutboundMessage.status.in_(("pending", "failed")),
@@ -511,6 +519,13 @@ def claim_outbound_messages(
                     ),
                     OutboundMessage.attempt_count < MAX_OUTBOUND_ATTEMPTS,
                 )
+        )
+        if provider is not None:
+            due_statement = due_statement.where(ChannelAccount.provider == provider)
+
+        due = list(
+            session.scalars(
+                due_statement
                 .order_by(OutboundMessage.next_attempt_at, OutboundMessage.id)
                 .with_for_update(skip_locked=True)
                 .limit(limit)
@@ -534,6 +549,121 @@ def claim_outbound_messages(
                 )
             )
     return items
+
+
+def _sandbox_payload_sha256(payload: dict) -> str:
+    canonical = json.dumps(
+        payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def receive_sandbox_message(
+    session: Session,
+    *,
+    outbound_id: int,
+    payload: SandboxOutboundPayload,
+    ctx: ExecutionContext,
+) -> SandboxDeliveryReceiptRead:
+    """Record one authenticated, exact-payload local sandbox receipt.
+
+    The outbound row is locked before the receipt is read or created. This
+    makes a repeated or concurrent receiver call resolve to the same durable
+    receipt rather than creating a second local delivery claim.
+    """
+    payload_data = payload.model_dump(mode="json")
+    payload_sha256 = _sandbox_payload_sha256(payload_data)
+    with session.begin():
+        require_permission(session, ctx, DELIVERIES_MANAGE)
+        outbound_row = session.execute(
+            select(OutboundMessage, ChannelAccount.provider)
+            .join(
+                Conversation,
+                and_(
+                    Conversation.organization_id == OutboundMessage.organization_id,
+                    Conversation.id == OutboundMessage.conversation_id,
+                ),
+            )
+            .join(
+                ChannelAccount,
+                and_(
+                    ChannelAccount.organization_id == Conversation.organization_id,
+                    ChannelAccount.id == Conversation.channel_account_id,
+                ),
+            )
+            .where(
+                OutboundMessage.organization_id == ctx.organization_id,
+                OutboundMessage.id == outbound_id,
+            )
+            .with_for_update()
+        ).one_or_none()
+        if outbound_row is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Outbound message not found.")
+        outbound, provider = outbound_row
+        if provider != "sandbox":
+            raise AppError(
+                ErrorCode.INVALID_INPUT,
+                "Only sandbox outbound messages can be received locally.",
+            )
+
+        receipt = session.scalar(
+            select(SandboxDeliveryReceipt)
+            .where(
+                SandboxDeliveryReceipt.organization_id == ctx.organization_id,
+                SandboxDeliveryReceipt.outbound_id == outbound.id,
+            )
+            .with_for_update()
+        )
+        if receipt is not None:
+            if receipt.payload_sha256 != payload_sha256:
+                raise AppError(
+                    ErrorCode.INVALID_INPUT,
+                    "The sandbox receipt payload does not match the original outbound message.",
+                )
+            return SandboxDeliveryReceiptRead(
+                outbound_id=outbound.id,
+                provider_message_id=receipt.provider_message_id,
+                duplicate=True,
+            )
+        if outbound.status != "processing":
+            raise AppError(
+                ErrorCode.INVALID_INPUT,
+                "Only a processing sandbox outbound message can be received.",
+            )
+        if outbound.payload != payload_data:
+            raise AppError(
+                ErrorCode.INVALID_INPUT,
+                "The sandbox payload does not match the original outbound message.",
+            )
+
+        provider_message_id = f"sandbox-{outbound.id}"
+        session.add(
+            SandboxDeliveryReceipt(
+                organization_id=ctx.organization_id,
+                outbound_id=outbound.id,
+                provider_message_id=provider_message_id,
+                payload_sha256=payload_sha256,
+            )
+        )
+        session.flush()
+        record_event(
+            session,
+            ctx=ctx,
+            entity_type="outbound_message",
+            entity_id=str(outbound.id),
+            action="outbound.sandbox.received",
+            before_state={"status": outbound.status},
+            after_state={
+                "status": outbound.status,
+                "provider": "sandbox",
+                "provider_message_id": provider_message_id,
+            },
+        )
+        return SandboxDeliveryReceiptRead(
+            outbound_id=outbound.id,
+            provider_message_id=provider_message_id,
+            duplicate=False,
+        )
 
 
 def settle_outbound_result(
@@ -570,8 +700,43 @@ def settle_outbound_result(
                 "Only a processing outbound message can be settled.",
             )
 
+        provider = session.scalar(
+            select(ChannelAccount.provider)
+            .select_from(Conversation)
+            .join(
+                ChannelAccount,
+                and_(
+                    ChannelAccount.organization_id == Conversation.organization_id,
+                    ChannelAccount.id == Conversation.channel_account_id,
+                ),
+            )
+            .where(
+                Conversation.organization_id == ctx.organization_id,
+                Conversation.id == outbound.conversation_id,
+            )
+        )
+        if provider is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Outbound message not found.")
+
         message = session.get(Message, outbound.message_id)
         if data.outcome in {"sent", "delivered"}:
+            if provider == "sandbox":
+                receipt = session.scalar(
+                    select(SandboxDeliveryReceipt)
+                    .where(
+                        SandboxDeliveryReceipt.organization_id == ctx.organization_id,
+                        SandboxDeliveryReceipt.outbound_id == outbound.id,
+                    )
+                    .with_for_update()
+                )
+                if (
+                    receipt is None
+                    or receipt.provider_message_id != data.provider_message_id
+                ):
+                    raise AppError(
+                        ErrorCode.INVALID_INPUT,
+                        "Sandbox delivery requires a matching local receipt.",
+                    )
             outbound.status = data.outcome
             outbound.provider_message_id = data.provider_message_id
             outbound.last_error_code = None

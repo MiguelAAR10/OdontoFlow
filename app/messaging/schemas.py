@@ -20,7 +20,7 @@ class InboundMessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["1.0"]
-    provider: Literal["whatsapp", "test"]
+    provider: Literal["whatsapp", "test", "sandbox"]
     channel_account_external_id: str = Field(min_length=1, max_length=128)
     provider_message_id: str = Field(min_length=1, max_length=255)
     external_contact_id: str = Field(min_length=1, max_length=255)
@@ -82,6 +82,7 @@ class OutboundClaimRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     limit: int = Field(default=10, ge=1, le=50)
+    provider: Literal["whatsapp", "sandbox"] | None = None
 
 
 class OutboundDispatchItem(BaseModel):
@@ -90,6 +91,33 @@ class OutboundDispatchItem(BaseModel):
     idempotency_key: UUID
     payload: dict
     attempt_count: int
+
+
+class SandboxOutboundPayload(BaseModel):
+    """The exact text payload accepted by the local sandbox receiver."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"]
+    provider: Literal["sandbox"]
+    channel_account_external_id: str = Field(min_length=1, max_length=128)
+    external_contact_id: str = Field(min_length=1, max_length=255)
+    message_type: Literal["text"]
+    text: str = Field(min_length=1, max_length=4096)
+    message_id: int = Field(gt=0)
+
+
+class SandboxDeliveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outbound_id: int = Field(gt=0)
+    payload: SandboxOutboundPayload
+
+
+class SandboxDeliveryReceiptRead(BaseModel):
+    outbound_id: int
+    provider_message_id: str = Field(min_length=1, max_length=255)
+    duplicate: bool
 
 
 class OutboundResultCreate(BaseModel):

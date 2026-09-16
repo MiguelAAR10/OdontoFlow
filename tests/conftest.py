@@ -91,6 +91,7 @@ def clean_tables(migrated_engine):
         tables = (
             "reception_handoffs",
             "appointment_cancellation_proposals",
+            "sandbox_delivery_receipts",
             "outbound_messages",
             "messages",
             "conversations",

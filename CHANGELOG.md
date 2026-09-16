@@ -1,5 +1,18 @@
 # OdontoFlow Changelog
 
+## SANDBOX-OUTBOUND-02 — First-class local sandbox delivery (2026-09-16)
+
+- Added the development-only `sandbox` channel provider through additive
+  migration `0019`, while preserving `test` as non-dispatchable and
+  `whatsapp` as a separate provider.
+- Added an authenticated, tenant-scoped local receiver with a durable,
+  exact-payload receipt and duplicate replay protection. Sandbox success
+  settlement now requires that server-owned receipt; ordinary outbound retry,
+  lease, dead-letter, audit and idempotency semantics remain in force.
+- Added a bounded one-shot sandbox consumer and local configuration examples;
+  it accepts only loopback receiver URLs, requires the existing
+  `outbound-dispatcher` credential, and has no live-provider fallback.
+
 ## AGENT-TURN-AUTH-01 — Secure Sales Agent entrypoint (2026-09-16)
 
 - Secured `POST /sales-agent/turn` with the existing PostgreSQL-backed bearer

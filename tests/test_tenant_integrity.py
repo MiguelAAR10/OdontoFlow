@@ -1042,6 +1042,7 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
         "conversations",
         "messages",
         "outbound_messages",
+        "sandbox_delivery_receipts",
         # Contact-bound booking proposals (Phase 4).
         "appointment_proposals",
             # Deterministic receptionist state (Phase 5).

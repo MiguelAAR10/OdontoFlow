@@ -18,7 +18,9 @@ from app.tenancy import BOOTSTRAP_ORGANIZATION_ID  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--organization", type=int, default=BOOTSTRAP_ORGANIZATION_ID)
-    parser.add_argument("--provider", choices=("whatsapp", "test"), default="whatsapp")
+    parser.add_argument(
+        "--provider", choices=("whatsapp", "test", "sandbox"), default="whatsapp"
+    )
     parser.add_argument("--external-account-id", required=True)
     parser.add_argument("--phone-number-id")
     parser.add_argument("--display-name", required=True)

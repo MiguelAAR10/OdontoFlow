@@ -28,6 +28,7 @@ from app.messaging.models import (  # noqa: F401
     Conversation,
     Message,
     OutboundMessage,
+    SandboxDeliveryReceipt,
 )
 from app.organization.models import Location, Practitioner, PractitionerCapability  # noqa: F401
 from app.scheduling.models import Appointment, AvailabilityRule, ScheduleBlock  # noqa: F401

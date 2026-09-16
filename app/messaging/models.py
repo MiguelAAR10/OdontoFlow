@@ -48,7 +48,7 @@ class ChannelAccount(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('whatsapp', 'test')",
+            "provider IN ('whatsapp', 'test', 'sandbox')",
             name="ck_channel_accounts_provider",
         ),
         UniqueConstraint(
@@ -330,6 +330,9 @@ class OutboundMessage(Base):
             "idempotency_key",
             name="uq_outbound_messages_organization_idempotency",
         ),
+        UniqueConstraint(
+            "organization_id", "id", name="uq_outbound_messages_organization_id"
+        ),
         ForeignKeyConstraint(
             ["organization_id", "conversation_id", "message_id"],
             ["messages.organization_id", "messages.conversation_id", "messages.id"],
@@ -341,6 +344,53 @@ class OutboundMessage(Base):
             "organization_id",
             "status",
             "next_attempt_at",
+        ),
+    )
+
+
+class SandboxDeliveryReceipt(Base):
+    """One durable, outbound-bound receipt for a local sandbox delivery."""
+
+    __tablename__ = "sandbox_delivery_receipts"
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    organization_id: Mapped[int] = mapped_column(nullable=False)
+    outbound_id: Mapped[int] = mapped_column(nullable=False)
+    provider_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "provider_message_id LIKE 'sandbox-%'",
+            name="ck_sandbox_delivery_receipts_provider_message_id",
+        ),
+        CheckConstraint(
+            "payload_sha256 ~ '^[a-f0-9]{64}$'",
+            name="ck_sandbox_delivery_receipts_payload_sha256",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "outbound_id",
+            name="uq_sandbox_delivery_receipts_organization_outbound",
+        ),
+        UniqueConstraint(
+            "provider_message_id",
+            name="uq_sandbox_delivery_receipts_provider_message_id",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id"],
+            ["organizations.id"],
+            ondelete="RESTRICT",
+            name="fk_sandbox_delivery_receipts_organization",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "outbound_id"],
+            ["outbound_messages.organization_id", "outbound_messages.id"],
+            ondelete="RESTRICT",
+            name="fk_sandbox_delivery_receipts_organization_outbound",
         ),
     )
 

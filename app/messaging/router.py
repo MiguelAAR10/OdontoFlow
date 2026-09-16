@@ -4,18 +4,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy.orm import Session
 
+from app.agent_tools.reception import resume_automation
+from app.agent_tools.schemas import EmptyArguments
 from app.context import resolve_http_context
 from app.db import get_db
 from app.errors import AppError, ErrorCode
-from app.agent_tools.reception import resume_automation
-from app.agent_tools.schemas import EmptyArguments
 from app.idempotency.service import run_idempotent_command
 from app.messaging.schemas import (
-    InboundMessageCreate,
-    InboundReceipt,
     ConversationCloseReceipt,
     ConversationRead,
     ConversationStatus,
+    InboundMessageCreate,
+    InboundReceipt,
     OutboundClaimRequest,
     OutboundDispatchItem,
     OutboundMessageCreate,
@@ -24,6 +24,8 @@ from app.messaging.schemas import (
     OutboundStatusRead,
     ResumeAutomationReceipt,
     ResumeAutomationRequest,
+    SandboxDeliveryReceiptRead,
+    SandboxDeliveryRequest,
 )
 from app.messaging.service import (
     claim_outbound_messages,
@@ -31,6 +33,7 @@ from app.messaging.service import (
     enqueue_outbound_message,
     ingest_inbound_message,
     list_conversations,
+    receive_sandbox_message,
     settle_outbound_result,
 )
 
@@ -169,8 +172,33 @@ def claim_outbound_route(
     return claim_outbound_messages(
         db,
         limit=payload.limit,
+        provider=payload.provider,
         ctx=resolve_http_context(request),
     )
+
+
+@router.post(
+    "/sandbox/receive",
+    response_model=SandboxDeliveryReceiptRead,
+    status_code=201,
+)
+def receive_sandbox_route(
+    payload: SandboxDeliveryRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: str = Depends(require_uuid4_idempotency_key),
+    db: Session = Depends(get_db),
+) -> SandboxDeliveryReceiptRead:
+    del idempotency_key
+    receipt = receive_sandbox_message(
+        db,
+        outbound_id=payload.outbound_id,
+        payload=payload.payload,
+        ctx=resolve_http_context(request),
+    )
+    if receipt.duplicate:
+        response.status_code = 200
+    return receipt
 
 
 @router.post("/outbound/{outbound_id}/result", response_model=OutboundStatusRead)
