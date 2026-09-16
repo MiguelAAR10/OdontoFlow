@@ -53,7 +53,9 @@ def _synthetic_event(message_id: str, contact_id: str, text_value: str) -> dict[
     }
 
 
-def _scenario_model(observed: dict[str, Any]):
+def _scenario_model(
+    observed: dict[str, Any], *, same_turn_confirmation: bool = False
+):
     from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
@@ -110,6 +112,82 @@ def _scenario_model(observed: dict[str, Any]):
             tool_messages = [message for message in current if message.type == "tool"]
             last_tool = getattr(tool_messages[-1], "name", None) if tool_messages else None
             sequence = len([message for message in messages if message.type == "ai"]) + 1
+
+            if same_turn_confirmation:
+                if not tool_messages:
+                    message = self._call("list_services", {}, sequence)
+                elif last_tool == "list_services":
+                    message = self._call("list_locations", {}, sequence)
+                elif last_tool == "list_locations":
+                    services_result = self._tool_result(messages, "list_services") or {}
+                    locations_result = self._tool_result(messages, "list_locations") or {}
+                    services = services_result.get("data", {}).get("services", [])
+                    locations = locations_result.get("data", {}).get("locations", [])
+                    service = next(row for row in services if row["name"] == "Limpieza dental")
+                    location = next(row for row in locations if "Lince" in row["name"])
+                    message = self._call(
+                        "query_available_slots",
+                        {
+                            "service_id": service["id"],
+                            "location_id": location["id"],
+                            "window_start": "2026-09-07T13:00:00Z",
+                            "window_end": "2026-09-07T15:00:00Z",
+                        },
+                        sequence,
+                    )
+                elif last_tool == "query_available_slots":
+                    slots_result = self._decode_tool_message(tool_messages[-1]) or {}
+                    slots = slots_result.get("data", {}).get("slots", [])
+                    assert slots
+                    selected = slots[0]
+                    services_result = self._tool_result(messages, "list_services") or {}
+                    locations_result = self._tool_result(messages, "list_locations") or {}
+                    service = next(
+                        row
+                        for row in services_result.get("data", {}).get("services", [])
+                        if row["name"] == "Limpieza dental"
+                    )
+                    location = next(
+                        row
+                        for row in locations_result.get("data", {}).get("locations", [])
+                        if "Lince" in row["name"]
+                    )
+                    message = self._call(
+                        "propose_appointment",
+                        {
+                            "full_name": "Synthetic Same-Turn Patient",
+                            "service_id": service["id"],
+                            "location_id": location["id"],
+                            "practitioner_id": selected["practitioner_id"],
+                            "start": selected["start"],
+                        },
+                        sequence,
+                    )
+                elif last_tool == "propose_appointment":
+                    proposal = (self._decode_tool_message(tool_messages[-1]) or {}).get(
+                        "data", {}
+                    ).get("proposal")
+                    assert proposal
+                    message = self._call(
+                        "confirm_appointment",
+                        {
+                            "proposal_id": proposal["id"],
+                            "confirmation_token": proposal["confirmation_token"],
+                        },
+                        sequence,
+                    )
+                elif last_tool == "confirm_appointment":
+                    result = self._decode_tool_message(tool_messages[-1]) or {}
+                    if result.get("status") == "error":
+                        message = self._response(
+                            "Quedo pendiente de una confirmación posterior.", "proposed"
+                        )
+                    else:
+                        message = self._response("Tu cita quedó confirmada.", "confirmed")
+                else:
+                    raise AssertionError(f"unexpected same-turn tool: {last_tool}")
+
+                return ChatResult(generations=[ChatGeneration(message=message)])
 
             if turn in {1, 4}:
                 if not tool_messages:
@@ -638,6 +716,112 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
     assert session.execute(text("SELECT count(*) FROM messages WHERE direction='outbound'")).scalar_one() == 7
     assert session.execute(text("SELECT count(*) FROM appointments")).scalar_one() == 2
     assert session.execute(text("SELECT count(*) FROM appointment_proposals WHERE status='confirmed'")).scalar_one() == 2
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("langchain") is None
+    or importlib.util.find_spec("langgraph") is None,
+    reason="Same-turn guard regression runs in the optional sales-agent dependency job",
+)
+def test_wf01_rejects_same_turn_model_propose_then_confirm(
+    migrated_engine, session, w4_agent_database_url
+) -> None:
+    from conftest import AUTH_HEADERS
+    from fastapi.testclient import TestClient
+
+    from app import create_app
+    from app.db import get_db
+    from integrations.n8n.wf_01_sales_agent_v0 import WF01Runner
+    from sales_agent.api import create_app as create_sales_agent_app
+    from sales_agent.gateway import BackendGateway
+    from sales_agent.memory import PostgresAgentMemory
+    from sales_agent.runtime import SalesAgentRuntime
+    from scripts.bootstrap_n8n_lab import provision_n8n_lab
+
+    config = provision_n8n_lab(session, organization_id=1)
+    session.commit()
+    maker = sessionmaker(bind=migrated_engine, autoflush=False, expire_on_commit=False)
+    backend_app = create_app()
+
+    def _db():
+        db = maker()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    backend_app.dependency_overrides[get_db] = _db
+    backend_app.state.auth_sessionmaker = maker
+    observed: dict[str, Any] = {}
+    model = _scenario_model(observed, same_turn_confirmation=True)
+
+    class RecordingClient:
+        def __init__(self, client):
+            self.client = client
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def post(self, url, **kwargs):
+            self.calls.append((str(url), dict(kwargs.get("json", {}))))
+            return self.client.post(url, **kwargs)
+
+    with TestClient(backend_app, headers=AUTH_HEADERS) as raw_backend:
+        recording_backend = RecordingClient(raw_backend)
+        gateway = BackendGateway(
+            "http://testserver",
+            config["ODONTOFLOW_AGENT_TOKEN"],
+            http_client=recording_backend,
+        )
+        with PostgresAgentMemory.open(w4_agent_database_url, setup=True) as memory:
+            runtime = SalesAgentRuntime(
+                gateway=gateway,
+                model=model,
+                checkpointer=memory.checkpointer,
+            )
+            sales_app = create_sales_agent_app(runtime=runtime)
+            with TestClient(sales_app) as sales_client:
+                result = WF01Runner(
+                    backend_client=recording_backend,
+                    sales_agent_client=sales_client,
+                    inbound_token=config["ODONTOFLOW_INBOUND_TOKEN"],
+                    agent_token=config["ODONTOFLOW_AGENT_TOKEN"],
+                ).execute(
+                    _synthetic_event(
+                        "same-turn-1", "contact-a", "Book the first available cleaning"
+                    )
+                )
+
+    assert result is not None
+    assert result.agent_response is not None
+    assert result.agent_response["outcome"] == "proposed"
+    tool_calls = [
+        payload["tool_name"]
+        for path, payload in recording_backend.calls
+        if path == "/agent-tools/call"
+    ]
+    assert "propose_appointment" in tool_calls
+    assert "confirm_appointment" in tool_calls
+    session.expire_all()
+    assert session.execute(text("SELECT count(*) FROM messages WHERE direction = 'inbound'")).scalar_one() == 1
+    assert session.execute(text("SELECT count(*) FROM appointments")).scalar_one() == 0
+    assert (
+        session.execute(
+            text("SELECT count(*) FROM appointment_proposals WHERE status = 'pending'")
+        ).scalar_one()
+        == 1
+    )
+    assert (
+        session.execute(
+            text(
+                "SELECT count(*) FROM audit_events "
+                "WHERE entity_type = 'agent_tool' "
+                "AND action = 'agent_tool.called' "
+                "AND after_state->>'tool_name' = 'confirm_appointment' "
+                "AND after_state->>'status' = 'error' "
+                "AND after_state->>'error_code' = 'INVALID_INPUT'"
+            )
+        ).scalar_one()
+        == 1
+    )
 
 
 def test_wf01_handoff_blocks_agent_tool_automation(

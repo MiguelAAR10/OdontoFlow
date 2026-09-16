@@ -29,7 +29,7 @@ from app.idempotency.service import (
     run_idempotent_command,
     settle_receipt,
 )
-from app.messaging.models import ContactIdentity, Conversation
+from app.messaging.models import ContactIdentity, Conversation, Message
 from app.organization.models import Location, Practitioner
 from app.scheduling.models import Appointment, AppointmentProposal
 from app.scheduling.query import find_available_slots
@@ -73,6 +73,30 @@ def _load_conversation_and_contact(
     if contact is None:
         raise AppError(ErrorCode.NOT_FOUND, "Conversation not found.")
     return conversation, contact
+
+
+def _require_later_inbound_message(
+    session: Session,
+    *,
+    conversation_id: int,
+    proposal_created_at: datetime,
+    ctx: ExecutionContext,
+) -> None:
+    later_message_id = session.scalar(
+        select(Message.id)
+        .where(
+            Message.organization_id == ctx.organization_id,
+            Message.conversation_id == conversation_id,
+            Message.direction == "inbound",
+            Message.created_at > proposal_created_at,
+        )
+        .limit(1)
+    )
+    if later_message_id is None:
+        raise AppError(
+            ErrorCode.INVALID_INPUT,
+            "Appointment confirmation requires a later inbound message.",
+        )
 
 
 def _proposal_outcome(proposal: AppointmentProposal) -> dict:
@@ -301,6 +325,12 @@ def confirm_contact_booking_proposal(
                 ErrorCode.INVALID_INPUT,
                 "The appointment proposal is no longer confirmable.",
             )
+        _require_later_inbound_message(
+            session,
+            conversation_id=conversation_id,
+            proposal_created_at=proposal.created_at,
+            ctx=ctx,
+        )
 
         appointment = _book_appointment_core(
             session,

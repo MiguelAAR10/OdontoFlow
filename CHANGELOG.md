@@ -1,5 +1,15 @@
 # OdontoFlow Changelog
 
+## AGENT-CONFIRM-GUARD-01 — Enforce patient confirmation (2026-09-16)
+
+- Booking proposal confirmation now requires authoritative persisted evidence of
+  a later inbound message in the same conversation before creating an
+  appointment; same-turn model claims fail with `INVALID_INPUT`.
+- Updated the valid booking fixtures to exercise the required two-message
+  proposal/confirmation flow and added a real-PostgreSQL fake-model regression
+  covering pending proposal state, zero appointments, isolation, expiry,
+  idempotency and audit behavior.
+
 ## FE3A — Service-to-Cash V1 backend (2026-09-06)
 
 - Added patient-aware charge and execution projections, charge filters, the

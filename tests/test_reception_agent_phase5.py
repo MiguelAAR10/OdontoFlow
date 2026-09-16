@@ -514,6 +514,7 @@ def test_sales_agent_v0_books_but_cannot_use_dormant_permissions(client, session
     assert proposed.status_code == 200, proposed.text
     assert proposed.json()["status"] == "success", proposed.text
     proposal = proposed.json()["data"]["proposal"]
+    inbound = _add_inbound_message(session, seeded, suffix="sales-agent-v0")
 
     confirmed = _call(
         client,
@@ -528,7 +529,6 @@ def test_sales_agent_v0_books_but_cannot_use_dormant_permissions(client, session
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["status"] == "success", confirmed.text
     appointment_id = confirmed.json()["data"]["appointment"]["id"]
-    inbound = _add_inbound_message(session, seeded, suffix="sales-agent-v0")
 
     forbidden_tools = (
         (

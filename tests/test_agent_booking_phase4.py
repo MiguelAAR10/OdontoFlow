@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from app import create_app
 from app.catalog.models import Service
 from app.db import get_db
-from app.messaging.models import ChannelAccount, ContactIdentity, Conversation
+from app.messaging.models import ChannelAccount, ContactIdentity, Conversation, Message
 from app.organization.models import (
     Location,
     Practitioner,
@@ -166,6 +166,26 @@ def _propose(client, seeded, *, key: str | None = None):
     )
 
 
+def _add_later_inbound_message(session, seeded, *, after: datetime, suffix: str) -> Message:
+    message = Message(
+        organization_id=ORG,
+        channel_account_id=seeded["conversation"].channel_account_id,
+        conversation_id=seeded["conversation"].id,
+        direction="inbound",
+        provider_message_id=f"booking-confirm-{suffix}",
+        message_type="text",
+        body_text="Sí, confirmo la cita propuesta.",
+        media_reference=None,
+        delivery_status="received",
+        occurred_at=after,
+        content_expires_at=after + timedelta(days=1),
+        created_at=after,
+    )
+    session.add(message)
+    session.commit()
+    return message
+
+
 def test_proposal_persists_confirmation_state_without_booking(client, session):
     seeded = _seed_booking_conversation(
         session, suffix="proposal", phone="+51999110001"
@@ -197,6 +217,14 @@ def test_explicit_confirmation_books_once_and_returns_calendar_payload(client, s
         session, suffix="confirm", phone="+51999110002"
     )
     proposal = _propose(client, seeded).json()["data"]["proposal"]
+    stored_proposal = session.get(AppointmentProposal, proposal["id"])
+    assert stored_proposal is not None
+    _add_later_inbound_message(
+        session,
+        seeded,
+        after=stored_proposal.created_at + timedelta(seconds=1),
+        suffix="confirm",
+    )
     confirmation_key = str(uuid4())
     arguments = {
         "proposal_id": proposal["id"],
@@ -285,4 +313,3 @@ def test_expired_proposal_cannot_be_confirmed(client, session):
     assert response.json()["status"] == "error"
     assert response.json()["error"]["code"] == "INVALID_INPUT"
     assert session.scalar(select(func.count()).select_from(Appointment)) == 0
-
