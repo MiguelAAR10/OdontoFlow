@@ -1,0 +1,237 @@
+# PROJECT-PUBLISH-01 — Backend repository scout (read-only)
+# Generated: 2026-09-17 by dispatched worker task_d2d71c99364c / ctx_2b3020a767d3
+# Constraints honored: no push, no remote/config change, no product-file edit,
+# no provider call, no database touched, no secret value read or printed.
+# Only file written by the scout: this packet.
+
+packet:
+  activity: PROJECT-PUBLISH-01
+  scope: backend repository publish readiness reconnaissance
+  date: 2026-09-17
+  repo_path: /home/miguel/projects/portfolio/AI-EdgeRunners/odontoflow/odontoflow-backend
+  mode: read-only
+  task_id: task_d2d71c99364c
+  dispatch_id: ctx_2b3020a767d3
+
+remote:
+  name: origin
+  fetch_url: "git@github.com:MiguelAAR10/OdontoFlow.git"
+  push_url: "git@github.com:MiguelAAR10/OdontoFlow.git"
+  health: reachable
+  health_evidence: "git ls-remote --heads origin -> exit=0"
+  heads_visible:
+    main: b7f11cef9bac6bbe6eb2a0bd144a541b8032f4bc
+    integration/sales-agent-v0: 3291787e9184c673fecceec403fc33fa347d5d8c
+    codex/backend-n8n-pilot-20260903: d5274d31de862e088a026a16b863ca22ec3e03a6
+    codex/render-current-lab-20260908: b140ede38f5082d5f657dee6c2a738fe51607551
+  notes:
+    - "Local directory name is odontoflow-backend; the GitHub repository is OdontoFlow.git."
+    - "Scout performed no fetch; origin refs were read as fetched by the coordinator."
+
+refs:
+  current_branch: main
+  head: 14d918dae1c1cf954f0994f9b39841ac2ffe2969
+  head_subject: "docs: record sandbox diagnostic smoke boundary"
+  origin_main: b7f11cef9bac6bbe6eb2a0bd144a541b8032f4bc
+  origin_main_subject: "docs: add ENG-00 backend engineering baseline handoff"
+  origin_main_date: 2026-09-08
+  merge_base: b7f11cef9bac6bbe6eb2a0bd144a541b8032f4bc
+  ahead: 11
+  behind: 0
+  fast_forward_publish_possible: true
+  stash_entries: 0
+  other_local_branches:
+    integration/sales-agent-v0:
+      sha: 3291787e9184c673fecceec403fc33fa347d5d8c
+      published: true
+    MiguelAAR10/deploy-sales-agent-cloud:
+      sha: cb918fb
+      published: false
+      worktree_path: /home/miguel/orca/workspaces/odontoflow-backend/deploy-sales-agent-cloud
+      local_only_commits: [cb918fb, 817f73a, 6861cac, c872560]
+      note: "Separate Orca worktree. Contains 'feat: add Gemini support and deploy sales agent to Cloud Run (dev)' plus AGENT-01 handoff commits. Not merged into main; not covered by this publish unless the coordinator decides otherwise."
+  worktrees:
+    - {path: /home/miguel/projects/portfolio/AI-EdgeRunners/odontoflow/odontoflow-backend, branch: main, sha: 14d918d}
+    - {path: /home/miguel/orca/workspaces/odontoflow-backend/deploy-sales-agent-cloud, branch: MiguelAAR10/deploy-sales-agent-cloud, sha: cb918fb}
+
+working_tree:
+  staged: none
+  modified_tracked:
+    .gitignore:
+      change: "adds '.env.local'"
+      observations:
+        - "Redundant: '.env*.local' already ignores .env.local."
+        - "File loses its trailing newline in the working copy."
+    AGENTS.md:
+      change: "adds a control-plane pointer block (odontoflow-planning/orchestration/current-activity.yaml + project.yaml, CONTEXT.md, .claude/skills/odontoflow-engineering/SKILL.md)"
+  untracked:
+    total_files: 85
+    project_docs_likely_intended_history:
+      - docs/architecture/AS-IS-backend.md
+      - docs/architecture/GAP-and-roadmap.md
+      - docs/architecture/TO-BE-agentic-erp.md
+      - docs/reviews/2026-09-11-backend-product-reality.md
+      - docs/reviews/2026-09-11-backend-product-reality.json
+      - docs/integration/TEAM_SYNC_AND_BRAND_TRANSFER.md
+      - docs/superpowers/handoffs/2026-09-16-agent-confirm-intent-02.md
+      - docs/superpowers/handoffs/2026-09-16-sandbox-outbound-01.md
+      - docs/superpowers/handoffs/2026-09-16-sandbox-real-model-01.md
+      - docs/superpowers/handoffs/2026-09-17-chan-01.md
+      - docs/superpowers/handoffs/2026-09-17-chan-02.md
+      - docs/superpowers/handoffs/REMOTE-01-backend-remote-deployment.md
+      - docs/superpowers/evidence/2026-09-17-chan-01-live-route.yaml
+      - docs/superpowers/evidence/2026-09-17-chan-01-sender.yaml
+    local_tooling_not_product_history:
+      - ".agents/skills/** (31 files)"
+      - ".claude/skills/** (11 entries)"
+      - ".playwright-mcp/** (30 files, all dated 2026-09-03)"
+      - skills-lock.json
+    ignore_gaps: [".agents/", ".claude/", ".playwright-mcp/", "skills-lock.json are untracked and NOT ignored"]
+
+publish_candidates:
+  description: "Local-only commits on main, oldest to newest. All authored by Miguel Arias <ariasreymer10@gmail.com>, all dated 2026-09-16."
+  commits:
+    - {sha: 6b0d222, subject: "fix: enforce later patient confirmation for agent booking", changelog: AGENT-CONFIRM-GUARD-01}
+    - {sha: 55f22cc, subject: "fix: fail closed agent booking confirmation", changelog: AGENT-CONFIRM-FAIL-CLOSED-03}
+    - {sha: 021fa52, subject: "docs: add local runtime smoke handoff", changelog: LOCAL-RUNTIME-SMOKE-01}
+    - {sha: ad72435, subject: "fix: secure sales agent turn entrypoint", changelog: AGENT-TURN-AUTH-01}
+    - {sha: 872ddd2, subject: "feat: add isolated local sandbox outbound delivery", changelog: SANDBOX-OUTBOUND-02}
+    - {sha: 22e2b51, subject: "feat: close local sandbox inbound loop", changelog: SANDBOX-INBOUND-01}
+    - {sha: 1d4a710, subject: "feat: bootstrap OpenRouter Sales Agent runtime", changelog: OPENROUTER-RUNTIME-01}
+    - {sha: d6940c6, subject: "fix: bound Sales Agent real-model execution", changelog: SANDBOX-REAL-MODEL-03}
+    - {sha: 18fae8d, subject: "docs: record first real model sandbox smoke", changelog: "SANDBOX-REAL-MODEL-04 (tracked handoff)"}
+    - {sha: db52789, subject: "fix: expose sanitized Sales Agent failure diagnostics", changelog: REAL-MODEL-DIAGNOSTICS-01}
+    - {sha: 14d918d, subject: "docs: record sandbox diagnostic smoke boundary", changelog: "REAL-MODEL-DIAGNOSTICS-01 (docs closeout)"}
+  delta_stats: {files_changed: 48, insertions: 6943, deletions: 89}
+  delta_scope_toplevel: {tests: 13, docs: 13, integrations: 6, app: 5, scripts: 4, sales_agent: 3, alembic: 2, other: ["CHANGELOG.md", ".env.example"]}
+  deletions_or_renames: none
+  tracked_handoffs_added: 11
+  verdict: "SAFE to publish as a plain fast-forward of main. All 11 commits carry conventional messages, CHANGELOG entries and (for 11 of them) tracked handoffs; the delta introduces no secret-like values and no deletions/renames."
+
+secret_hygiene:
+  method: "pattern counts only; no secret value was read or printed"
+  local_delta_matches:
+    sk_like: 0
+    sk_or_v1: 0
+    long_bearer: 0
+    env_style_token_assignments: 0
+    absolute_home_paths: 0
+    loopback_127_0_0_1: 69
+    localhost: 1
+  notes:
+    - "Loopback hits are expected: dev-only sandbox URLs and documentation."
+  pre_existing_flags:
+    pattern: "sk-[A-Za-z0-9_-]{20,}"
+    finding: "8 doc files match in HEAD; the identical file set also matches in origin/main, so these are pre-existing published content, not introduced by the 11 local commits."
+    files:
+      - docs/backend-platform-blueprint.md
+      - docs/superpowers/evidence/platform-readiness-data-ownership.md
+      - docs/superpowers/specs/2026-08-14-platform-foundation-design.md
+      - docs/superpowers/handoffs/2026-08-13-task-5-commercial-lead-handoff.md
+      - docs/superpowers/handoffs/2026-08-13-task-6-availability-handoff.md
+      - docs/superpowers/handoffs/2026-08-13-task-8-fastapi-api-handoff.md
+      - docs/superpowers/handoffs/2026-08-13-task-9-cancel-reschedule-handoff.md
+      - docs/superpowers/handoffs/2026-08-13-task-10-lead-to-appointment-e2e-handoff.md
+    action: "Not inspected further (values not read). Already on origin/main; out of scope for this publish."
+  env_files:
+    tracked: [".env.example"]
+    untracked_ignored: [".env.local"]
+    env_example_variable_names_only:
+      - API_HOST
+      - API_PORT
+      - APP_ENV
+      - CORS_ALLOWED_ORIGINS
+      - DATABASE_URL
+      - ERP_ANONYMOUS_COMPAT
+      - INTEGRATION_API_ENABLED
+      - MAX_JSON_BODY_BYTES
+      - MESSAGE_CONTENT_RETENTION_DAYS
+      - OPENROUTER_API_KEY
+      - RATE_LIMIT_MUTATIONS_PER_MINUTE
+      - RATE_LIMIT_READS_PER_MINUTE
+      - REQUIRE_HTTPS
+      - SALES_AGENT_BACKEND_URL
+      - SALES_AGENT_DATABASE_URL
+      - SALES_AGENT_MODEL
+      - SALES_AGENT_MODEL_BASE_URL
+      - SALES_AGENT_MODEL_MAX_OUTPUT_TOKENS
+      - SALES_AGENT_MODEL_PROVIDER
+      - SALES_AGENT_MODEL_TIMEOUT_SECONDS
+      - SALES_AGENT_RECURSION_LIMIT
+      - SALES_AGENT_REQUEST_TIMEOUT_SECONDS
+      - SALES_AGENT_TURN_TIMEOUT_SECONDS
+      - SALES_AGENT_V0_CREDENTIAL
+      - SANDBOX_BACKEND_URL
+      - SANDBOX_CHANNEL_ACCOUNT_EXTERNAL_ID
+      - SANDBOX_DISPATCHER_TOKEN
+      - SANDBOX_INBOUND_TOKEN
+      - SANDBOX_RECEIVER_URL
+      - SANDBOX_REQUEST_TIMEOUT_SECONDS
+      - TEST_DATABASE_URL
+      - TLS_CERTFILE
+      - TLS_KEYFILE
+      - TRUSTED_PROXY_IPS
+    env_local_names_missing_from_example: [GEMINI_API_KEY, GOOGLE_OAUTH_CLIENT_ID]
+    env_local_note: "Those two names exist only in .env.local and belong to the unmerged deploy-sales-agent-cloud worktree feature; .env.local is ignored and must not be published."
+  untracked_evidence_flags:
+    - file: docs/superpowers/evidence/2026-09-17-chan-01-live-route.yaml
+      finding: "1 string of >=40 chars matching a token-like charset; not inspected; review before tracking."
+    - file: docs/superpowers/evidence/2026-09-17-chan-01-sender.yaml
+      finding: "1 string of >=40 chars matching a token-like charset; not inspected; review before tracking."
+
+docs_audit:
+  readme: "Present, detailed. Stale against HEAD: states migration HEAD 0008 and 384 tests; current migration head is 0019 and CHANGELOG records 403 passing as of 0008."
+  development_md: "Present (Spanish). Stale: 'Estado verificado 2026-09-03: 384 tests, migracion 0008'. Documents uv workflow, real-PostgreSQL requirement, and warns against docker compose up from this directory."
+  agents_md: "Present; working tree adds the control-plane block. Full engineering contract is in place."
+  architecture_docs_tracked: [docs/architecture.md, docs/backend-platform-blueprint.md, docs/backend-evolution.md, docs/roadmap.md, docs/api-reference.md, docs/flows.md, docs/README.md]
+  architecture_docs_untracked: [docs/architecture/AS-IS-backend.md, docs/architecture/GAP-and-roadmap.md, docs/architecture/TO-BE-agentic-erp.md]
+  reviews_untracked: [docs/reviews/2026-09-11-backend-product-reality.md, docs/reviews/2026-09-11-backend-product-reality.json]
+  handoffs:
+    tracked_in_commits: 11
+    untracked_local: 6
+    convention: "docs/superpowers/handoffs/<date>-<activity>.md, one per task"
+  test_count_claims_conflict: "README/DEVELOPMENT say 384; CHANGELOG says 403 (was 384) at 0008; untracked GAP doc says 492. No suite run by the scout (read-only); current count unverified."
+
+migration_head:
+  head: "0019_sandbox_provider"
+  chain: "linear 0001 -> 0019, no branches; each file's down_revision points to the previous revision"
+  new_in_delta: "0019_sandbox_provider.py (additive, sandbox channel provider)"
+  alembic_env_change: "alembic/env.py +1 line in the delta"
+
+run_and_test_commands:
+  readme:
+    - "docker compose up -d db  # PostgreSQL 15 on host port 5434"
+    - "uv sync --locked"
+    - "uv run alembic upgrade head"
+    - "uv run python -m app.run"
+    - "uv run python -m pytest -q"
+  development_md:
+    - "docker start odontoflow-db-1"
+    - "uv sync --locked"
+    - "uv run python -m pytest -q"
+  agents_md:
+    - ".venv/bin/python -m pytest -q  # 0 failures before and after"
+  test_db: "odontoflow_test on port 5434; never run two pytest processes concurrently"
+
+risks_and_followups:
+  - "Publishing only pushes committed history. The AGENTS.md control-plane edit, the .gitignore edit, 14 untracked project docs and 2 evidence files would remain unpublished; the coordinator must decide whether any of them belong in the publish."
+  - "Local tooling directories (.agents/, .claude/, .playwright-mcp/, skills-lock.json) are untracked and unignored; they should not be published and are candidates for .gitignore."
+  - "Stale migration/test claims in README.md and DEVELOPMENT.md (0008/384) should be refreshed when the docs are next touched."
+  - "The deploy-sales-agent-cloud worktree holds 4 local-only commits including a Cloud Run/Gemini feature; it is not on main and is outside this publish."
+  - "CHAN-02 handoff independently confirms the same ref state (main 14d918d, origin/main b7f11ce, 11 ahead, 0 behind)."
+  - "Dispatch channel observation: heartbeat sends on capability dcap_... returned 'Dispatch ctx_2b3020a767d3 capability is revoked'; check returned no messages. worker_done will be attempted with the same dispatch identity."
+  - "The full test suite was intentionally not executed: this scout is read-only and must not touch the shared test database."
+
+evidence_commands_run:
+  - "git status --porcelain=v1 -b"
+  - "git rev-parse HEAD; git branch --show-current; git log --oneline -25"
+  - "git remote -v; git branch -vv; git rev-list --left-right --count origin/main...HEAD"
+  - "git log --format='%h %ad %s' --date=short origin/main..HEAD"
+  - "git log --all --not --remotes --oneline"
+  - "git merge-base --is-ancestor origin/main HEAD"
+  - "git ls-remote --heads origin"
+  - "git diff --stat origin/main..HEAD; git diff --name-status origin/main..HEAD"
+  - "git grep -lE 'sk-[A-Za-z0-9_-]{20,}' HEAD / origin/main"
+  - "pattern counts over 'git diff origin/main..HEAD' (no values printed)"
+  - "grep -oE '^[A-Za-z_][A-Za-z0-9_]*' .env.example .env.local (names only)"
+  - "reading: README.md, DEVELOPMENT.md, pyproject.toml, .gitignore, CHANGELOG.md head, docs/architecture/GAP-and-roadmap.md head, docs/superpowers/handoffs/2026-09-17-chan-02.md, REMOTE-01 handoff"
