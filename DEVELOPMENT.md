@@ -8,9 +8,12 @@ Ningún LLM decide nada acá — cada regla que importa (no doble reserva,
 integridad de tenant, no sobrepago) está forzada por PostgreSQL o por código
 determinista, nunca por un modelo.
 
-**Estado verificado (2026-09-03):** 384 tests PASS contra PostgreSQL real,
-migración `0008`, 32 rutas OpenAPI reales. Detalle completo y sin filtrar en
-`odontoflow-planning/docs/handoffs/discovery/ODONTOFLOW_CTO_DISCOVERY_VERIFICATION.md`.
+**Estado verificado (2026-09-17):** migración HEAD `0019_sandbox_provider`
+contra PostgreSQL real. El conteo de tests actual **no** se fija aquí a
+propósito — hay tres cifras históricas que no coinciden (384/403/492) y esta
+pasada de documentación no volvió a correr el suite; el número verificado
+más reciente vive en `../odontoflow-planning/STATUS.md`. Detalle de arquitectura
+en `../odontoflow-planning/docs/ARCHITECTURE.md`.
 
 ## Función de desarrollo
 
@@ -27,7 +30,8 @@ Desarrollar acá significa extender ese patrón, nunca saltárselo.
 ```bash
 docker start odontoflow-db-1        # PostgreSQL 15 en :5434
 uv sync --locked                    # entorno reproducible desde uv.lock
-uv run python -m pytest -q          # 384 deben pasar
+uv run alembic upgrade head         # migración HEAD: 0019_sandbox_provider
+uv run python -m pytest -q          # ver ../odontoflow-planning/STATUS.md para el conteo verificado actual
 ```
 
 Nunca `docker compose up` desde aquí — el nombre del proyecto compose se
@@ -51,10 +55,16 @@ Verificado y confirmado ausente (no es que esté oculto, no existe):
 2. **Ningún dato real de clínica cargado** — el bloqueador más grande del
    proyecto hoy no es código, es conseguir el catálogo y una semana real de
    citas de una clínica de verdad (`M5_REVENUE_LEAKAGE_BASELINE.md §6`).
-3. **Ningún agente de ventas / LLM con autoridad de negocio** — y así debe
-   seguir. Si alguna vez se construye uno, tiene que llamar a esta API como
-   herramienta (`POST /leads`, `GET /slots/query`, `POST /appointments`),
-   nunca escribir directo a la base.
+3. **El agente de ventas (AIRY, `sales_agent/`) ya existe y nunca tiene
+   autoridad de negocio propia** — llama a esta API solo a través de un
+   gateway de 7 herramientas tipadas (`POST /agent-tools/call`), nunca
+   escribe directo a la base. Verificado hasta ahora solo contra un canal
+   sandbox de desarrollo (`provider=sandbox`); no hay canal WhatsApp real, no
+   hay presupuesto de modelo de producción aprobado, y la confirmación de
+   reserva iniciada por el agente queda fail-closed a propósito. Ver
+   `../odontoflow-planning/docs/ARCHITECTURE.md` y
+   `docs/handoffs/plans/2026-09-17-reception-core-closeout-01.md` (en
+   `../odontoflow-planning`) para el estado completo.
 
 No construyas Promotion/Discount/Campaign/Referral/Tariff completos todavía
 — no hay evidencia de que la clínica los necesite antes de tener datos
@@ -65,4 +75,4 @@ reales.
 Escrito por Miguel Arias. Sin contribuciones externas de código en este
 repo — las contribuciones de Alejandro y Leonardo viven en
 `odontoflow-voice` y `odontoflow-sim` respectivamente (créditos completos
-en `odontoflow-planning/CONTRIBUTIONS.md`).
+en `../odontoflow-planning/CONTRIBUTIONS.md`).

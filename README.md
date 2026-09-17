@@ -12,8 +12,12 @@ the same domain layer under the same rules.
 > **Status:** Vertical 1 (Lead-to-Appointment) **CLOSED** · Platform Foundation **PF1–PF7 CLOSED**
 > (tenant integrity, authorization, execution context/audit, idempotent commands, clinical core,
 > economic core, inventory ledger) · **M4 Pilot Fit CLOSED** — location-aware multi-branch inventory +
-> atomic transfers (migration 0008, 384 tests). Frontend fully integrated on the real contract
-> (Agenda, Patients, Cash, Inventory). See [`docs/roadmap.md`](docs/roadmap.md).
+> atomic transfers. Frontend fully integrated on the real contract (Agenda, Patients, Cash, Inventory).
+> A sandbox-verified Sales Agent (AIRY) runtime now exists on top of this foundation, closing out
+> Reception/Scheduling v1 — **not yet DONE as a component**. Migration HEAD is `0019`; for current
+> verified test counts and the Reception/Scheduling v1 status, see
+> `../odontoflow-planning/STATUS.md` and `../odontoflow-planning/docs/ARCHITECTURE.md` (numbers here can
+> lag). See [`docs/roadmap.md`](docs/roadmap.md).
 
 ---
 
@@ -26,11 +30,14 @@ the same domain layer under the same rules.
 - **Multi-tenant foundation.** `Organization` is the tenant root; every tenant-consistency relationship is
   enforced by a PostgreSQL composite foreign key, so cross-tenant states are structurally impossible, not
   just "validated" in application code.
-- **Agent-native by design, not yet by wiring.** A permission-based IAM (`Principal` = human | agent |
-  integration | system) and an explicit `ExecutionContext` exist so that future agents call the exact same
-  deterministic services humans use, with auditable provenance — but no authentication exists yet, and
-  context/permission enforcement currently covers booking, cancellation, and rescheduling only. See
-  [`docs/architecture.md`](docs/architecture.md) §9 for the full, current gap list.
+- **Agent-native, and now agent-wired in a sandbox.** A permission-based IAM (`Principal` = human | agent |
+  integration | system) and an explicit `ExecutionContext` gate every action. A LangGraph-based Sales Agent
+  (AIRY, `sales_agent/`) now calls the exact same deterministic services through a 7-tool allowlisted
+  gateway (`POST /agent-tools/call`), authenticated end-to-end and proven against a controlled sandbox
+  channel provider — but there is still no real WhatsApp channel, no approved production model-provider
+  budget, and agent-driven booking confirmation is intentionally fail-closed pending a trusted acceptance
+  mechanism. See [`docs/architecture.md`](docs/architecture.md) §9 and
+  `../odontoflow-planning/docs/ARCHITECTURE.md` for the full, current gap list.
 
 ## Architecture, in one picture
 
@@ -55,10 +62,11 @@ Caller (HTTP today; future agent tool)
 - **Platform Foundation PF1–PF7: CLOSED.** Tenant integrity (composite FKs), permission-based IAM,
   execution provenance, durable command idempotency (`command_receipts`, no Redis), the clinical core
   (Patient / Visit / ServiceExecution), the economic core (Charge / Payment / ServiceConsumption) and the
-  inventory ledger (append-only `inventory_movements`, derived balance) exist and are tested (384 tests,
-  migration HEAD `0008`). Authentication does not exist yet — identity today is the trusted default
-  (`system` principal, bootstrap org) per PF3; read [`docs/architecture.md`](docs/architecture.md) §9
-  before assuming more.
+  inventory ledger (append-only `inventory_movements`, derived balance) exist and are tested against real
+  PostgreSQL (migration HEAD `0019`; current verified test count is tracked in
+  `../odontoflow-planning/STATUS.md`, not hardcoded here). Human/system authentication exists for the ERP
+  path; the Sales Agent turn entrypoint requires its own server-issued agent principal
+  (`AGENT-TURN-AUTH-01`); read [`docs/architecture.md`](docs/architecture.md) §9 before assuming more.
 - **M4 Pilot Fit: CLOSED.** Inventory is location-aware: every stock-affecting movement carries a
   `location_id`, balances are per Product × Location, clinical consumption draws stock at the
   Visit/ServiceExecution location, and transfers move stock between locations in one atomic, idempotent,
@@ -74,8 +82,8 @@ Caller (HTTP today; future agent tool)
 | API | FastAPI (sync routes, Pydantic v2, auto OpenAPI at `/openapi.json`) |
 | ORM | SQLAlchemy 2.0 (declarative, typed `Mapped[...]`) |
 | DB | PostgreSQL 15 (`btree_gist`, JSONB, partial GiST exclusion) |
-| Migrations | Alembic (`0001` → `0008`: vertical, tenant, iam, receipts, clinical, economics, inventory, location-aware inventory) |
-| Tests | pytest + real PostgreSQL (`odontoflow_test`) — 384 tests |
+| Migrations | Alembic (`0001` → `0019`: vertical, tenant, iam, receipts, clinical, economics, inventory, location-aware inventory, … sandbox channel provider; see `alembic/versions/` for the full linear chain) |
+| Tests | pytest + real PostgreSQL (`odontoflow_test`) — current verified count in `../odontoflow-planning/STATUS.md` |
 | Runtime | Docker Compose (Postgres), Python 3.12 |
 
 No Redis. No Kafka. No async migration. No LLM libraries. The frontend lives in a sibling repository
@@ -106,14 +114,17 @@ app/
   economics/             # Charge, Payment, ServiceConsumption; consumption → SALIDA
   inventory/             # Product, InventoryMovement (append-only ledger), balance,
                          # entries, adjustments, transfers (Product × Location)
+sales_agent/             # AIRY runtime: LangGraph agent, langgraph-checkpoint-postgres memory,
+                         # 7-tool gateway, sales_agent.api entrypoint (separate from app.run)
 alembic/versions/        # 0001 vertical · 0002 org/tenant · 0003 iam · 0004 command_receipts
                          # 0005 clinical · 0006 economics · 0007 inventory · 0008 location-aware
+                         # … chain continues to 0019 sandbox_provider — see the directory for the rest
 docs/superpowers/
   specs/                 # approved design specs (Vertical 1, Platform Foundation)
   evidence/              # platform readiness audits
-  handoffs/              # per-task reports (Tasks 1-10, PF1-PF4)
+  handoffs/              # per-task reports (append-only; Tasks 1-10, PF1-PF4, and everything since)
 docs/integration/        # frontend ↔ backend contract, matrix, data flows, first vertical
-tests/                   # 384 tests: unit + integration against real PostgreSQL
+tests/                   # unit + integration against real PostgreSQL — see planning STATUS.md for count
 ```
 
 ---
@@ -133,12 +144,12 @@ code.
 Requirements: Docker (Compose), [uv](https://astral.sh/uv), Python 3.12 (see `.python-version`), git.
 
 ```bash
-# 1. PostgreSQL (host port 5434 — keeps other projects untouched)
-docker compose up -d db
+# 1. PostgreSQL (canonical local container, host port 5434)
+docker start odontoflow-db-1
 
 # 2. Environment (uv.lock is the single source of truth for resolved versions)
 uv sync --locked
-cp .env.example .env.local   # adjust DATABASE_URL if needed
+test -e .env.local || cp .env.example .env.local   # never overwrite an existing local env
 
 # 3. Migrations
 uv run alembic upgrade head
@@ -154,7 +165,7 @@ uv run python -m app.run
 > Dependencies are declared in `pyproject.toml` (PEP 621) with `uv.lock` pinning exact resolutions —
 > never `requirements.txt`. To add one, edit `pyproject.toml` and run `uv lock && uv sync --locked`.
 > Dev-only tools live in `[dependency-groups].dev`. Full environment reference:
-> [`ENVIRONMENT.md`](../../ENVIRONMENT.md).
+> [`ENVIRONMENT.md`](../ENVIRONMENT.md).
 
 > The test database `odontoflow_test` is created automatically by the test suite on port 5434. Ports 5432/5433 belong to other projects and are never touched.
 
@@ -164,11 +175,18 @@ uv run python -m app.run
 
 ```bash
 # Full suite (real PostgreSQL — no SQLite, no mocks for DB invariants)
-uv run python -m pytest -q        # 384 tests
+uv run python -m pytest -q
 
 # Focused
 uv run python -m pytest tests/test_inventory_location.py tests/test_migrations.py -q
+
+# Focused on Reception / Sales Agent (AIRY)
+uv run python -m pytest tests/test_sales_agent_w4.py tests/test_reception_agent_phase5.py -q
 ```
+
+Never run two `pytest` processes concurrently against `odontoflow_test`. For
+the current verified pass/fail count, see `../odontoflow-planning/STATUS.md` —
+historical numbers in this file are not re-verified on every doc pass.
 
 The suite covers: migrations upgrade/downgrade/re-upgrade cycles, GiST overlap rejection with real races
 (two sessions + threads + `Barrier`, no sleeps), tenant-integrity proofs (cross-org states rejected by the
