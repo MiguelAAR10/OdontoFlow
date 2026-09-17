@@ -1,5 +1,13 @@
 # OdontoFlow Changelog
 
+## SANDBOX-REAL-MODEL-03 — Bounded real-model execution (2026-09-16)
+
+- Added explicit finite OpenRouter/native-OpenAI model request timeouts, zero
+  provider retries, bounded model output tokens, and a cooperative overall
+  Sales Agent turn deadline without changing the provider/model boundary.
+- Preserved the existing one-attempt mutating turn, typed gateway, fail-closed
+  booking proposal, sandbox transport, and fake-model compatibility contracts.
+
 ## OPENROUTER-RUNTIME-01 — Provider and local environment bootstrap (2026-09-16)
 
 - Made OpenRouter the explicit Sales Agent development provider with the

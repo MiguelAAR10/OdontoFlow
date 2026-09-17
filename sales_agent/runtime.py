@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
-from time import perf_counter_ns
+from time import monotonic, perf_counter_ns
 from typing import TYPE_CHECKING, Any, Callable
 
 from sales_agent.config import (
@@ -73,6 +74,33 @@ class SalesAgentExecutionError(RuntimeError):
     """A safe, non-content-bearing agent execution failure."""
 
 
+class SalesAgentProviderTimeout(SalesAgentExecutionError):
+    """The configured model provider exceeded one bounded request."""
+
+
+class SalesAgentTurnTimeout(SalesAgentExecutionError):
+    """The complete Sales Agent turn exceeded its configured deadline."""
+
+
+def _is_timeout_exception(exc: BaseException) -> bool:
+    """Recognize provider/client timeout types without importing optional code eagerly."""
+    if isinstance(exc, TimeoutError):
+        return True
+    try:
+        import httpx
+
+        if isinstance(exc, httpx.TimeoutException):
+            return True
+    except ImportError:  # pragma: no cover - httpx is part of the agent extra
+        pass
+    try:
+        from openai import APITimeoutError
+
+        return isinstance(exc, APITimeoutError)
+    except ImportError:  # pragma: no cover - openai is part of langchain-openai
+        return False
+
+
 def _usage_value(usage: Any, *keys: str) -> int:
     if not isinstance(usage, dict):
         return 0
@@ -125,7 +153,11 @@ def _tool_result_failed(result: Any) -> bool:
     return False
 
 
-def _build_middleware(telemetry: _TurnTelemetry):
+def _build_middleware(
+    telemetry: _TurnTelemetry,
+    *,
+    deadline: float | None = None,
+):
     """Create current-compatible tool/model middleware for one turn."""
     try:
         from langchain.agents.middleware import AgentMiddleware, wrap_tool_call
@@ -135,14 +167,22 @@ def _build_middleware(telemetry: _TurnTelemetry):
             "Install the sales-agent optional dependency group to run the agent."
         ) from exc
 
+    def ensure_deadline() -> None:
+        if deadline is not None and monotonic() >= deadline:
+            raise SalesAgentTurnTimeout("The Sales Agent turn deadline was exceeded.")
+
     @wrap_tool_call
     def telemetry_tool_call(request, handler):
+        ensure_deadline()
         telemetry.tool_calls += 1
         try:
             result = handler(request)
+            ensure_deadline()
             if _tool_result_failed(result):
                 telemetry.tool_failures += 1
             return result
+        except SalesAgentTurnTimeout:
+            raise
         except Exception:
             telemetry.tool_failures += 1
             tool_call = getattr(request, "tool_call", {})
@@ -154,8 +194,19 @@ def _build_middleware(telemetry: _TurnTelemetry):
 
     class ModelTelemetryMiddleware(AgentMiddleware):
         def wrap_model_call(self, request, handler):
+            ensure_deadline()
             telemetry.model_calls += 1
-            response = handler(request)
+            try:
+                response = handler(request)
+            except SalesAgentTurnTimeout:
+                raise
+            except Exception as exc:
+                if _is_timeout_exception(exc):
+                    raise SalesAgentProviderTimeout(
+                        "The model provider request exceeded its configured timeout."
+                    ) from exc
+                raise
+            ensure_deadline()
             _record_model_usage(response, telemetry)
             return response
 
@@ -185,6 +236,18 @@ class SalesAgentRuntime:
         )
         if self.recursion_limit <= 0 or self.recursion_limit > 100:
             raise ValueError("recursion_limit must be between 1 and 100.")
+        if (
+            not math.isfinite(self.settings.model_timeout_seconds)
+            or self.settings.model_timeout_seconds <= 0
+        ):
+            raise ValueError("model_timeout_seconds must be greater than zero.")
+        if (
+            not math.isfinite(self.settings.turn_timeout_seconds)
+            or self.settings.turn_timeout_seconds <= 0
+        ):
+            raise ValueError("turn_timeout_seconds must be greater than zero.")
+        if self.settings.model_max_output_tokens <= 0:
+            raise ValueError("model_max_output_tokens must be greater than zero.")
         self.checkpointer = checkpointer
         self.telemetry_sink = telemetry_sink or self._emit_telemetry
         self._model = model
@@ -235,6 +298,9 @@ class SalesAgentRuntime:
         kwargs: dict[str, Any] = {
             "model_provider": integration_provider,
             "api_key": self.settings.model_api_key,
+            "timeout": self.settings.model_timeout_seconds,
+            "max_retries": 0,
+            "max_tokens": self.settings.model_max_output_tokens,
         }
         if self.settings.model_base_url:
             kwargs["base_url"] = self.settings.model_base_url
@@ -245,7 +311,13 @@ class SalesAgentRuntime:
         self._model = init_chat_model(self.settings.model, **kwargs)
         return self._model
 
-    def _build_agent(self, conversation_id: int, telemetry: _TurnTelemetry):
+    def _build_agent(
+        self,
+        conversation_id: int,
+        telemetry: _TurnTelemetry,
+        *,
+        deadline: float | None = None,
+    ):
         try:
             from langchain.agents import create_agent
             from langchain.agents.structured_output import ToolStrategy
@@ -260,11 +332,16 @@ class SalesAgentRuntime:
             model=self._resolve_model(),
             tools=list(tools),
             system_prompt=SYSTEM_PROMPT,
-            middleware=_build_middleware(telemetry),
+            middleware=_build_middleware(telemetry, deadline=deadline),
             response_format=ToolStrategy(SalesAgentResponse),
             checkpointer=self.checkpointer,
         )
         return agent
+
+    @staticmethod
+    def _ensure_turn_deadline(deadline: float) -> None:
+        if monotonic() >= deadline:
+            raise SalesAgentTurnTimeout("The Sales Agent turn deadline was exceeded.")
 
     def _request_handoff(
         self,
@@ -294,12 +371,14 @@ class SalesAgentRuntime:
 
     def turn(self, request: SalesAgentTurnRequest) -> SalesAgentTurnResponse:
         started_ns = perf_counter_ns()
+        deadline = monotonic() + self.settings.turn_timeout_seconds
         telemetry = _TurnTelemetry(
             conversation_id=request.conversation_id,
             model=self.model_name,
         )
         outcome = "error"
         try:
+            self._ensure_turn_deadline(deadline)
             try:
                 inbound = self.gateway.load_latest_inbound_message(
                     request.conversation_id,
@@ -310,12 +389,19 @@ class SalesAgentRuntime:
                 raise
             if isinstance(inbound, dict):
                 inbound = InboundMessage.model_validate(inbound)
-            agent = self._build_agent(request.conversation_id, telemetry)
+            self._ensure_turn_deadline(deadline)
+            agent = self._build_agent(
+                request.conversation_id,
+                telemetry,
+                deadline=deadline,
+            )
             self.agent = agent
+            self._ensure_turn_deadline(deadline)
             result = agent.invoke(
                 {"messages": [{"role": "user", "content": inbound.text}]},
                 config=self.invoke_config(request.conversation_id),
             )
+            self._ensure_turn_deadline(deadline)
             structured = result.get("structured_response") if isinstance(result, dict) else None
             if isinstance(structured, SalesAgentResponse):
                 response = structured
@@ -329,12 +415,23 @@ class SalesAgentRuntime:
                 outcome=response.outcome,
                 handoff=response.handoff,
             )
+        except SalesAgentTurnTimeout:
+            outcome = "timeout"
+            raise
+        except SalesAgentProviderTimeout:
+            outcome = "provider_timeout"
+            raise
         except Exception as exc:
             try:
                 from langgraph.errors import GraphRecursionError
             except ImportError:
                 GraphRecursionError = ()
             if GraphRecursionError and isinstance(exc, GraphRecursionError):
+                try:
+                    self._ensure_turn_deadline(deadline)
+                except SalesAgentTurnTimeout:
+                    outcome = "timeout"
+                    raise
                 self._request_handoff(
                     conversation_id=request.conversation_id,
                     telemetry=telemetry,
@@ -348,6 +445,11 @@ class SalesAgentRuntime:
                     outcome="handoff",
                     handoff=True,
                 )
+            if _is_timeout_exception(exc):
+                outcome = "provider_timeout"
+                raise SalesAgentProviderTimeout(
+                    "The model provider request exceeded its configured timeout."
+                ) from exc
             if isinstance(exc, (GatewayError, AgentUnavailableError, ValueError)):
                 raise
             raise SalesAgentExecutionError(
@@ -364,6 +466,8 @@ class SalesAgentRuntime:
 
 __all__ = [
     "SalesAgentExecutionError",
+    "SalesAgentProviderTimeout",
     "SalesAgentRuntime",
+    "SalesAgentTurnTimeout",
     "SalesAgentTurnRequest",
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -20,6 +21,10 @@ OPENROUTER_MODEL_PROVIDER = "openai"
 SUPPORTED_MODEL_PROVIDERS = frozenset({"openai", "openrouter"})
 DEFAULT_RECURSION_LIMIT = 12
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 10.0
+DEFAULT_MODEL_TIMEOUT_SECONDS = 20.0
+DEFAULT_TURN_TIMEOUT_SECONDS = 180.0
+DEFAULT_MODEL_MAX_OUTPUT_TOKENS = 512
+MAX_MODEL_MAX_OUTPUT_TOKENS = 4096
 
 
 def validate_agent_database_url(raw_url: str) -> URL:
@@ -59,7 +64,7 @@ def _positive_float(name: str, default: float, *, environ: Mapping[str, str]) ->
         value = float(environ.get(name, str(default)))
     except ValueError as exc:
         raise ValueError(f"{name} must be a number.") from exc
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be greater than zero.")
     return value
 
@@ -75,6 +80,9 @@ class AgentSettings:
     model_provider: str = DEFAULT_MODEL_PROVIDER
     model_base_url: str | None = None
     model_api_key: str | None = field(default=None, repr=False)
+    model_timeout_seconds: float = DEFAULT_MODEL_TIMEOUT_SECONDS
+    turn_timeout_seconds: float = DEFAULT_TURN_TIMEOUT_SECONDS
+    model_max_output_tokens: int = DEFAULT_MODEL_MAX_OUTPUT_TOKENS
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "AgentSettings":
@@ -146,6 +154,22 @@ class AgentSettings:
             request_timeout_seconds=_positive_float(
                 "SALES_AGENT_REQUEST_TIMEOUT_SECONDS",
                 DEFAULT_REQUEST_TIMEOUT_SECONDS,
+                environ=source,
+            ),
+            model_timeout_seconds=_positive_float(
+                "SALES_AGENT_MODEL_TIMEOUT_SECONDS",
+                DEFAULT_MODEL_TIMEOUT_SECONDS,
+                environ=source,
+            ),
+            turn_timeout_seconds=_positive_float(
+                "SALES_AGENT_TURN_TIMEOUT_SECONDS",
+                DEFAULT_TURN_TIMEOUT_SECONDS,
+                environ=source,
+            ),
+            model_max_output_tokens=_positive_int(
+                "SALES_AGENT_MODEL_MAX_OUTPUT_TOKENS",
+                DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
+                maximum=MAX_MODEL_MAX_OUTPUT_TOKENS,
                 environ=source,
             ),
             model_provider=model_provider,

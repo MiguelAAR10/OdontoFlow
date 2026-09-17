@@ -19,6 +19,9 @@ def _clear_model_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "SALES_AGENT_MODEL_PROVIDER",
         "SALES_AGENT_MODEL",
         "SALES_AGENT_MODEL_BASE_URL",
+        "SALES_AGENT_MODEL_TIMEOUT_SECONDS",
+        "SALES_AGENT_TURN_TIMEOUT_SECONDS",
+        "SALES_AGENT_MODEL_MAX_OUTPUT_TOKENS",
         "OPENROUTER_API_KEY",
         "OPENAI_API_KEY",
     ):
@@ -113,8 +116,151 @@ def test_runtime_uses_openai_compatibility_with_openrouter_configuration(
         "model_provider": "openai",
         "api_key": "router-test-key",
         "base_url": OPENROUTER_BASE_URL,
+        "timeout": 20.0,
+        "max_retries": 0,
+        "max_tokens": 512,
         "use_responses_api": False,
     }
+
+
+def test_runtime_passes_explicit_bounded_provider_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_init_chat_model(model: str, **kwargs):
+        observed["model"] = model
+        observed.update(kwargs)
+        return object()
+
+    import langchain.chat_models
+
+    monkeypatch.setattr(langchain.chat_models, "init_chat_model", fake_init_chat_model)
+
+    from sales_agent.runtime import SalesAgentRuntime
+
+    runtime = SalesAgentRuntime(
+        gateway=object(),
+        settings=_settings(
+            model_timeout_seconds=7.5,
+            turn_timeout_seconds=45.0,
+            model_max_output_tokens=256,
+        ),
+    )
+    runtime._resolve_model()
+
+    assert observed["timeout"] == 7.5
+    assert observed["max_retries"] == 0
+    assert observed["max_tokens"] == 256
+    assert runtime.settings.turn_timeout_seconds == 45.0
+
+
+def test_native_openai_runtime_keeps_provider_boundary_and_bounded_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_init_chat_model(model: str, **kwargs):
+        observed["model"] = model
+        observed.update(kwargs)
+        return object()
+
+    import langchain.chat_models
+
+    monkeypatch.setattr(langchain.chat_models, "init_chat_model", fake_init_chat_model)
+
+    from sales_agent.runtime import SalesAgentRuntime
+
+    runtime = SalesAgentRuntime(
+        gateway=object(),
+        settings=_settings(
+            model="gpt-5.4-mini",
+            model_provider="openai",
+            model_base_url=None,
+            model_api_key="native-openai-test-key",
+        ),
+    )
+    runtime._resolve_model()
+
+    assert observed == {
+        "model": "gpt-5.4-mini",
+        "model_provider": "openai",
+        "api_key": "native-openai-test-key",
+        "timeout": 20.0,
+        "max_retries": 0,
+        "max_tokens": 512,
+    }
+
+
+def test_bounded_runtime_settings_are_explicitly_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_model_environment(monkeypatch)
+    monkeypatch.setenv("SALES_AGENT_MODEL_TIMEOUT_SECONDS", "7.5")
+    monkeypatch.setenv("SALES_AGENT_TURN_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("SALES_AGENT_MODEL_MAX_OUTPUT_TOKENS", "256")
+
+    settings = AgentSettings.from_env()
+
+    assert (
+        settings.model_timeout_seconds,
+        settings.turn_timeout_seconds,
+        settings.model_max_output_tokens,
+    ) == (7.5, 45.0, 256)
+
+
+def test_turn_deadline_is_classified_without_retrying_or_fabricating_a_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sales_agent.runtime import SalesAgentRuntime, SalesAgentTurnTimeout
+    from sales_agent.schemas import SalesAgentTurnRequest
+
+    events: list[dict] = []
+    runtime = SalesAgentRuntime(
+        gateway=object(),
+        settings=_settings(turn_timeout_seconds=1.0),
+        telemetry_sink=events.append,
+    )
+
+    def expired(_deadline: float) -> None:
+        raise SalesAgentTurnTimeout("turn deadline exceeded")
+
+    monkeypatch.setattr(runtime, "_ensure_turn_deadline", expired)
+
+    with pytest.raises(SalesAgentTurnTimeout):
+        runtime.turn(
+            SalesAgentTurnRequest(conversation_id=42, latest_inbound_message_id=7)
+        )
+
+    assert events[-1]["outcome"] == "timeout"
+
+
+def test_provider_timeout_is_classified_at_the_runtime_boundary() -> None:
+    from sales_agent.runtime import SalesAgentProviderTimeout, SalesAgentRuntime
+    from sales_agent.schemas import SalesAgentTurnRequest
+
+    class Gateway:
+        def load_latest_inbound_message(self, conversation_id, message_id):
+            return {"id": message_id, "text": "Synthetic inbound"}
+
+    class TimedOutAgent:
+        def invoke(self, *_args, **_kwargs):
+            raise TimeoutError("provider deadline")
+
+    events: list[dict] = []
+    runtime = SalesAgentRuntime(
+        gateway=Gateway(),
+        settings=_settings(),
+        telemetry_sink=events.append,
+    )
+    runtime._build_agent = lambda *_args, **_kwargs: TimedOutAgent()
+
+    with pytest.raises(SalesAgentProviderTimeout):
+        runtime.turn(
+            SalesAgentTurnRequest(conversation_id=42, latest_inbound_message_id=7)
+        )
+
+    assert events[-1]["outcome"] == "provider_timeout"
 
 
 def test_missing_openrouter_key_fails_closed_before_provider_execution(

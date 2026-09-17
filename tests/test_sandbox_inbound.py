@@ -6,6 +6,7 @@ import importlib.util
 import os
 from uuid import uuid4
 
+import httpx
 import pytest
 from conftest import AUTH_HEADERS, TEST_DATABASE_URL
 from fastapi.testclient import TestClient
@@ -319,6 +320,52 @@ def test_sandbox_sender_requires_both_server_credentials():
             inbound_token="inbound-token",
             agent_token="",
         )
+
+
+def test_sandbox_sender_does_not_retry_timed_out_turn_or_fabricate_outbound():
+    from integrations.sandbox.sender import (
+        SandboxInboundSender,
+        SandboxSenderTransportError,
+    )
+
+    class BackendClient:
+        def __init__(self):
+            self.calls: list[str] = []
+
+        def post(self, path, **_kwargs):
+            self.calls.append(path)
+            return httpx.Response(
+                201,
+                json={
+                    "message_id": 7,
+                    "conversation_id": 42,
+                    "contact_identity_id": 9,
+                    "duplicate": False,
+                },
+            )
+
+    class TimedOutSalesAgentClient:
+        def __init__(self):
+            self.calls = 0
+
+        def post(self, _path, **_kwargs):
+            self.calls += 1
+            raise httpx.ReadTimeout("synthetic caller timeout")
+
+    backend = BackendClient()
+    sales_agent = TimedOutSalesAgentClient()
+    sender = SandboxInboundSender(
+        backend_client=backend,
+        sales_agent_client=sales_agent,
+        inbound_token="inbound-token",
+        agent_token="agent-token",
+    )
+
+    with pytest.raises(SandboxSenderTransportError):
+        sender.send(_inbound_event(provider_message_id="sandbox-timeout-boundary"))
+
+    assert backend.calls == ["/internal/messages/inbound"]
+    assert sales_agent.calls == 1
 
 
 @pytest.mark.parametrize("provider", ["test", "whatsapp"])
