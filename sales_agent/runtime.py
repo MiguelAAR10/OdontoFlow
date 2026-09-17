@@ -13,7 +13,12 @@ from dataclasses import dataclass
 from time import perf_counter_ns
 from typing import TYPE_CHECKING, Any, Callable
 
-from sales_agent.config import AgentSettings, get_settings
+from sales_agent.config import (
+    OPENROUTER_BASE_URL,
+    OPENROUTER_MODEL_PROVIDER,
+    AgentSettings,
+    get_settings,
+)
 from sales_agent.schemas import (
     AgentUnavailableError,
     GatewayError,
@@ -202,13 +207,42 @@ class SalesAgentRuntime:
     def _resolve_model(self) -> Any:
         if self._model is not None:
             return self._model
+        if not self.settings.model_api_key:
+            key_name = (
+                "OPENROUTER_API_KEY"
+                if self.settings.model_provider == "openrouter"
+                else "OPENAI_API_KEY"
+            )
+            raise AgentUnavailableError(
+                f"The configured model provider credential is missing: {key_name}."
+            )
+        if self.settings.model_provider == "openrouter":
+            if self.settings.model_base_url != OPENROUTER_BASE_URL:
+                raise AgentUnavailableError(
+                    "The OpenRouter model base URL is not configured correctly."
+                )
+            integration_provider = OPENROUTER_MODEL_PROVIDER
+        elif self.settings.model_provider == "openai":
+            integration_provider = "openai"
+        else:  # pragma: no cover - AgentSettings validates configured providers
+            raise AgentUnavailableError("The configured model provider is unsupported.")
         try:
             from langchain.chat_models import init_chat_model
         except ImportError as exc:  # pragma: no cover - exercised in base env
             raise AgentUnavailableError(
                 "Install the sales-agent optional dependency group to run the agent."
             ) from exc
-        self._model = init_chat_model(self.settings.model)
+        kwargs: dict[str, Any] = {
+            "model_provider": integration_provider,
+            "api_key": self.settings.model_api_key,
+        }
+        if self.settings.model_base_url:
+            kwargs["base_url"] = self.settings.model_base_url
+        if self.settings.model_provider == "openrouter":
+            # Keep the OpenAI-compatible gateway on Chat Completions, the
+            # stable tool-calling surface supported by OpenRouter models.
+            kwargs["use_responses_api"] = False
+        self._model = init_chat_model(self.settings.model, **kwargs)
         return self._model
 
     def _build_agent(self, conversation_id: int, telemetry: _TurnTelemetry):

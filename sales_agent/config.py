@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from sqlalchemy.engine import URL, make_url
 
@@ -12,7 +13,11 @@ DEFAULT_AGENT_DATABASE_URL = (
 )
 CANONICAL_DATABASE_NAMES = frozenset({"odontoflow", "odontoflow_test", "odontoflow_e2e"})
 DEFAULT_BACKEND_BASE_URL = "http://127.0.0.1:8000"
-DEFAULT_MODEL = "openai:gpt-5.4-mini"
+DEFAULT_MODEL_PROVIDER = "openrouter"
+DEFAULT_MODEL = "deepseek/deepseek-v4-flash-0731"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_MODEL_PROVIDER = "openai"
+SUPPORTED_MODEL_PROVIDERS = frozenset({"openai", "openrouter"})
 DEFAULT_RECURSION_LIMIT = 12
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 10.0
 
@@ -32,9 +37,15 @@ def validate_agent_database_url(raw_url: str) -> URL:
     return url
 
 
-def _positive_int(name: str, default: int, *, maximum: int | None = None) -> int:
+def _positive_int(
+    name: str,
+    default: int,
+    *,
+    maximum: int | None = None,
+    environ: Mapping[str, str],
+) -> int:
     try:
-        value = int(os.environ.get(name, str(default)))
+        value = int(environ.get(name, str(default)))
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer.") from exc
     if value <= 0 or (maximum is not None and value > maximum):
@@ -43,9 +54,9 @@ def _positive_int(name: str, default: int, *, maximum: int | None = None) -> int
     return value
 
 
-def _positive_float(name: str, default: float) -> float:
+def _positive_float(name: str, default: float, *, environ: Mapping[str, str]) -> float:
     try:
-        value = float(os.environ.get(name, str(default)))
+        value = float(environ.get(name, str(default)))
     except ValueError as exc:
         raise ValueError(f"{name} must be a number.") from exc
     if value <= 0:
@@ -61,32 +72,85 @@ class AgentSettings:
     model: str
     recursion_limit: int
     request_timeout_seconds: float
+    model_provider: str = DEFAULT_MODEL_PROVIDER
+    model_base_url: str | None = None
+    model_api_key: str | None = field(default=None, repr=False)
 
     @classmethod
-    def from_env(cls) -> "AgentSettings":
-        database_url = os.environ.get(
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> "AgentSettings":
+        source = os.environ if environ is None else environ
+        database_url = source.get(
             "SALES_AGENT_DATABASE_URL",
-            os.environ.get("AGENT_DATABASE_URL", DEFAULT_AGENT_DATABASE_URL),
+            source.get("AGENT_DATABASE_URL", DEFAULT_AGENT_DATABASE_URL),
         )
         validated = validate_agent_database_url(database_url)
-        backend_url = os.environ.get(
+        backend_url = source.get(
             "SALES_AGENT_BACKEND_URL",
-            os.environ.get("BACKEND_BASE_URL", DEFAULT_BACKEND_BASE_URL),
+            source.get("BACKEND_BASE_URL", DEFAULT_BACKEND_BASE_URL),
         ).rstrip("/")
+
+        raw_model = source.get("SALES_AGENT_MODEL", DEFAULT_MODEL).strip()
+        configured_provider = source.get("SALES_AGENT_MODEL_PROVIDER")
+        configured_provider = configured_provider.strip().lower() if configured_provider else None
+
+        model = raw_model
+        prefixed_provider = None
+        if ":" in raw_model:
+            prefixed_provider, prefixed_model = raw_model.split(":", 1)
+            prefixed_provider = prefixed_provider.strip().lower()
+            if prefixed_provider in SUPPORTED_MODEL_PROVIDERS:
+                model = prefixed_model.strip()
+            else:
+                prefixed_provider = None
+        model_provider = configured_provider or prefixed_provider or DEFAULT_MODEL_PROVIDER
+        if model_provider not in SUPPORTED_MODEL_PROVIDERS:
+            supported = ", ".join(sorted(SUPPORTED_MODEL_PROVIDERS))
+            raise ValueError(
+                f"SALES_AGENT_MODEL_PROVIDER must be one of: {supported}."
+            )
+        if configured_provider and prefixed_provider and configured_provider != prefixed_provider:
+            raise ValueError(
+                "SALES_AGENT_MODEL_PROVIDER does not match the provider prefix in "
+                "SALES_AGENT_MODEL."
+            )
+        if not model:
+            raise ValueError("SALES_AGENT_MODEL must not be empty.")
+
+        configured_base_url = source.get("SALES_AGENT_MODEL_BASE_URL", "").strip()
+        if model_provider == "openrouter":
+            model_base_url = (configured_base_url or OPENROUTER_BASE_URL).rstrip("/")
+            if model_base_url != OPENROUTER_BASE_URL:
+                raise ValueError(
+                    "SALES_AGENT_MODEL_BASE_URL must be https://openrouter.ai/api/v1 "
+                    "when SALES_AGENT_MODEL_PROVIDER=openrouter."
+                )
+            model_api_key = source.get("OPENROUTER_API_KEY")
+        else:
+            model_base_url = configured_base_url.rstrip("/") or None
+            model_api_key = source.get("OPENAI_API_KEY")
+
         return cls(
             backend_base_url=backend_url,
-            backend_credential=os.environ.get(
+            backend_credential=source.get(
                 "SALES_AGENT_V0_CREDENTIAL",
-                os.environ.get("SALES_AGENT_CREDENTIAL"),
+                source.get("SALES_AGENT_CREDENTIAL"),
             ),
             agent_database_url=validated.render_as_string(hide_password=False),
-            model=os.environ.get("SALES_AGENT_MODEL", DEFAULT_MODEL),
+            model=model,
             recursion_limit=_positive_int(
-                "SALES_AGENT_RECURSION_LIMIT", DEFAULT_RECURSION_LIMIT, maximum=100
+                "SALES_AGENT_RECURSION_LIMIT",
+                DEFAULT_RECURSION_LIMIT,
+                maximum=100,
+                environ=source,
             ),
             request_timeout_seconds=_positive_float(
-                "SALES_AGENT_REQUEST_TIMEOUT_SECONDS", DEFAULT_REQUEST_TIMEOUT_SECONDS
+                "SALES_AGENT_REQUEST_TIMEOUT_SECONDS",
+                DEFAULT_REQUEST_TIMEOUT_SECONDS,
+                environ=source,
             ),
+            model_provider=model_provider,
+            model_base_url=model_base_url,
+            model_api_key=model_api_key.strip() if model_api_key else None,
         )
 
 

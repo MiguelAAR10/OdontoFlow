@@ -1,5 +1,20 @@
 # OdontoFlow Changelog
 
+## OPENROUTER-RUNTIME-01 — Provider and local environment bootstrap (2026-09-16)
+
+- Made OpenRouter the explicit Sales Agent development provider with the
+  default model `deepseek/deepseek-v4-flash-0731`, using the existing
+  `langchain-openai` OpenAI-compatible runtime and
+  `https://openrouter.ai/api/v1`.
+- Added a loopback-only, idempotent local bootstrap that applies migrations,
+  prepares separate agent memory, provisions the existing IAM profiles, and
+  preserves existing ignored env values and secrets.
+- Added a credential-free preflight; it performs no provider request and
+  reports `ready_for_real_model_smoke=false` until `OPENROUTER_API_KEY` is
+  supplied.
+- No new dependency, model fallback, booking-policy change, sandbox transport
+  change, or paid model request was introduced.
+
 ## SANDBOX-INBOUND-01 — Controlled end-to-end sandbox loop (2026-09-16)
 
 - Added the development-only `SandboxInboundSender`, which strictly accepts
