@@ -21,9 +21,10 @@ Read these when you need the authority behind a decision, or the exact evidence 
 | [`api-reference.md`](api-reference.md) | Every endpoint grouped by domain: method, path, permission, body, response, and the rules that keep the surface honest. |
 | [`rules-and-permissions.md`](rules-and-permissions.md) | The non-negotiable domain rules, the 33-code permission catalog, the error codes, and the inventory/money/idempotency rules. |
 | [`flows.md`](flows.md) | The deterministic journeys: booking, clinical, consumption→SALIDA, charge→payment, inventory entry/adjustment/transfer, error and idempotency flows. |
+| [`AGENT-COLLABORATION.md`](AGENT-COLLABORATION.md) | How agents coordinate changes across planning, backend, frontend, voice, simulator, and transport surfaces. |
 
 The root [`README.md`](../README.md) is the public entry point — a five-minute summary that links into the
-four documents above rather than repeating them.
+curated documents above rather than repeating them.
 
 ## `docs/superpowers/` — the engineering record
 

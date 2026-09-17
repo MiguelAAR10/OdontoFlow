@@ -25,6 +25,24 @@ dominio → evento de auditoría, una sola transacción.**
 
 Desarrollar acá significa extender ese patrón, nunca saltárselo.
 
+## Cómo colaboran los repositorios y los agentes
+
+La lógica de desarrollo no vive en el chat: cada actividad tiene un alcance,
+una prueba y un handoff persistido. El planning (`odontoflow-planning`) autoriza
+la actividad; este backend conserva la verdad de negocio; frontend, voice, sim
+y n8n trabajan como consumidores o adaptadores según su contrato.
+
+La guía completa para agentes de cualquier repositorio está en
+[`docs/AGENT-COLLABORATION.md`](docs/AGENT-COLLABORATION.md). Explica qué repo
+puede modificar cada tipo de cambio, el flujo
+`brief → evidencia → test → implementación → revisión → commit → handoff`,
+los límites de AIRY y los criterios de cierre de Reception/Scheduling v1.
+
+Resumen operativo: leer primero el `current-activity.yaml` del planning y este
+`AGENTS.md`; trabajar con un solo writer por superficie; probar contra
+PostgreSQL real; preservar cambios ajenos; y no declarar `REAL` algo que solo
+se vio en mocks, documentación o una prueba parcial.
+
 ## Cómo arrancar
 
 ```bash

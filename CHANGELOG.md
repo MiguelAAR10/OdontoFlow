@@ -1,5 +1,15 @@
 # OdontoFlow Changelog
 
+## Documentation — Development and agent collaboration (2026-09-17)
+
+- Expanded the backend README with the evidence-first development loop and
+  the boundary between deterministic backend business logic and sibling
+  adapters.
+- Added `docs/AGENT-COLLABORATION.md` as the shared playbook for agents working
+  across planning, backend, frontend, voice, simulator, and transport surfaces.
+- Added the playbook to the documentation index and development guide without
+  changing product code, schema, runtime behavior, or credentials.
+
 ## REAL-MODEL-DIAGNOSTICS-01 — Evidence-first Sales Agent failure classification (2026-09-16)
 
 - Preserved the existing generic Sales Agent error envelope while adding a

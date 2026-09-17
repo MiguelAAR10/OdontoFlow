@@ -75,6 +75,40 @@ Caller (HTTP today; future agent tool)
   (Patient → Appointment → Visit → Execution → Consumption → Charge → Payment → UI state → Transfer) is
   proven end-to-end with no mocks (see the frontend repo: `test/pilot-e2e.test.ts`).
 
+## How we develop
+
+OdontoFlow is developed as a sequence of small, evidence-backed vertical
+slices. The durable project authority is the planning repository: it selects
+the current activity, records decisions, and links the handoff. This backend
+owns the deterministic business contract; sibling repositories consume that
+contract rather than recreating it.
+
+The development loop is:
+
+```text
+authorized brief
+  → inspect fresh reality
+  → write the failing proof
+  → implement the smallest boundary
+  → focused tests
+  → full PostgreSQL suite when warranted
+  → independent review
+  → one scoped commit
+  → evidence-first handoff
+```
+
+The logic is intentionally strict: PostgreSQL and backend services decide
+tenant integrity, permissions, duration, availability, proposals, bookings,
+money, and inventory. AIRY, voice, n8n, sandbox transport, and the frontend
+are callers or adapters. They may request an operation through a typed,
+authorized contract, but they do not become a second source of business truth.
+
+For the complete cross-repository workflow — roles, write surfaces, change
+routing, testing gates, handoff format, and the Reception/Scheduling
+completion gate — read [`docs/AGENT-COLLABORATION.md`](docs/AGENT-COLLABORATION.md).
+It is the document to share with an agent arriving from the planning,
+frontend, voice, or simulator repository.
+
 ## Tech stack
 
 | Layer | Choice |
