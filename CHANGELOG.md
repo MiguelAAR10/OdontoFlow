@@ -1,5 +1,19 @@
 # OdontoFlow Changelog
 
+## REAL-MODEL-DIAGNOSTICS-01 — Evidence-first Sales Agent failure classification (2026-09-16)
+
+- Preserved the existing generic Sales Agent error envelope while adding a
+  sanitized diagnostic log record with trace IDs, execution stage, bounded
+  provider/runtime category, upstream status/request ID when supplied by the
+  SDK, elapsed time, and observable partial-effect state.
+- Classified OpenAI-compatible authentication, rate-limit, invalid-request,
+  model-unavailable, server, connection, timeout, invalid-response, gateway,
+  and unknown failures without logging exception text, provider bodies,
+  credentials, or patient payloads.
+- Preserved the one-attempt mutating-turn, typed gateway, fail-closed booking,
+  sandbox transport, native OpenAI, and fake-model contracts. No provider
+  request, retry, fallback, schema change, or new dependency was added.
+
 ## SANDBOX-REAL-MODEL-03 — Bounded real-model execution (2026-09-16)
 
 - Added explicit finite OpenRouter/native-OpenAI model request timeouts, zero

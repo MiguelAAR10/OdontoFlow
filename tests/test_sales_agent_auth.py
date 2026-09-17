@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass, field
 
 from fastapi.testclient import TestClient
@@ -220,6 +222,80 @@ def test_sales_agent_turn_allows_the_configured_sales_agent_service(
         "handoff": False,
     }
     assert [call.conversation_id for call in runtime.calls] == [7]
+
+
+def test_sales_agent_failure_returns_only_trace_details_and_logs_safe_diagnostic(
+    migrated_engine, session, caplog
+) -> None:
+    from sales_agent.runtime import SalesAgentDiagnostic, SalesAgentExecutionError
+
+    token = _token_for_principal(
+        session, organization_id=ORG, name="turn-diagnostic-agent"
+    )
+
+    class FailingRuntime:
+        calls = 0
+
+        def turn(self, request):
+            self.calls += 1
+            raise SalesAgentExecutionError(
+                "SYNTHETIC_PROVIDER_BODY",
+                diagnostic=SalesAgentDiagnostic(
+                    stage="model_execution",
+                    category="provider_invalid_request",
+                    upstream_status=400,
+                    upstream_request_id="req_synthetic_456",
+                    partial_business_effects=False,
+                ),
+            )
+
+    runtime = FailingRuntime()
+    request_id = "00000000-0000-4000-8000-000000000011"
+    correlation_id = "00000000-0000-4000-8000-000000000012"
+    caplog.set_level(logging.WARNING, logger="sales_agent.diagnostics")
+
+    with _sales_client(
+        migrated_engine, runtime, configured_token=token
+    ) as client:
+        response = client.post(
+            "/sales-agent/turn",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Request-Id": request_id,
+                "X-Correlation-Id": correlation_id,
+            },
+            json={"conversation_id": 7, "latest_inbound_message_id": 8},
+        )
+
+    body = response.json()
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "sales_agent.diagnostics"
+    ]
+    assert response.status_code == 503
+    assert body == {
+        "error": {
+            "code": "AGENT_EXECUTION_FAILED",
+            "message": "The Sales Agent could not complete this turn safely.",
+            "details": {
+                "request_id": request_id,
+                "correlation_id": correlation_id,
+            },
+        }
+    }
+    assert runtime.calls == 1
+    assert len(records) == 1
+    logged = json.loads(records[0].getMessage().removeprefix("sales_agent_failure "))
+    assert logged["request_id"] == request_id
+    assert logged["correlation_id"] == correlation_id
+    assert logged["stage"] == "model_execution"
+    assert logged["category"] == "provider_invalid_request"
+    assert logged["upstream_status"] == 400
+    assert logged["upstream_request_id"] == "req_synthetic_456"
+    assert logged["partial_business_effects"] is False
+    assert isinstance(logged["elapsed_ms"], int)
+    assert "SYNTHETIC_PROVIDER_BODY" not in caplog.text
 
 
 def test_sales_agent_turn_openapi_declares_bearer_security() -> None:

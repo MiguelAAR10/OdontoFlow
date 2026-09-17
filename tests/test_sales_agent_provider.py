@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -255,12 +256,100 @@ def test_provider_timeout_is_classified_at_the_runtime_boundary() -> None:
     )
     runtime._build_agent = lambda *_args, **_kwargs: TimedOutAgent()
 
-    with pytest.raises(SalesAgentProviderTimeout):
+    with pytest.raises(SalesAgentProviderTimeout) as failure:
         runtime.turn(
             SalesAgentTurnRequest(conversation_id=42, latest_inbound_message_id=7)
         )
 
     assert events[-1]["outcome"] == "provider_timeout"
+    assert failure.value.diagnostic.category == "provider_timeout"
+    assert failure.value.diagnostic.stage == "model_execution"
+
+
+def test_provider_status_failure_is_classified_without_serializing_provider_body() -> None:
+    import httpx
+    import openai
+
+    from sales_agent.runtime import diagnostic_for_exception
+
+    request = httpx.Request("POST", "https://router.invalid")
+    response = httpx.Response(
+        401,
+        headers={"x-request-id": "req_synthetic_123"},
+        request=request,
+    )
+    failure = openai.AuthenticationError(
+        "SYNTHETIC_PROVIDER_BODY",
+        response=response,
+        body={"detail": "SYNTHETIC_PROVIDER_BODY"},
+    )
+
+    diagnostic = diagnostic_for_exception(
+        failure,
+        stage="model_execution",
+        partial_business_effects=False,
+    )
+    encoded = json.dumps(diagnostic.as_dict(elapsed_ms=7500))
+
+    assert diagnostic.as_dict(elapsed_ms=7500) == {
+        "stage": "model_execution",
+        "category": "provider_authentication",
+        "upstream_status": 401,
+        "upstream_request_id": "req_synthetic_123",
+        "elapsed_ms": 7500,
+        "partial_business_effects": False,
+    }
+    assert "SYNTHETIC_PROVIDER_BODY" not in encoded
+
+
+def test_unknown_runtime_failure_remains_explicitly_unknown() -> None:
+    from sales_agent.runtime import diagnostic_for_exception
+
+    diagnostic = diagnostic_for_exception(
+        RuntimeError("SYNTHETIC_UNKNOWN_FAILURE"),
+        stage="model_execution",
+    )
+
+    assert diagnostic.as_dict() == {
+        "stage": "model_execution",
+        "category": "unknown",
+    }
+
+
+def test_runtime_wraps_unknown_failure_with_safe_diagnostic_and_no_tool_retry() -> None:
+    from sales_agent.runtime import SalesAgentExecutionError, SalesAgentRuntime
+    from sales_agent.schemas import SalesAgentTurnRequest
+
+    class Gateway:
+        def __init__(self):
+            self.tool_calls: list[str] = []
+
+        def load_latest_inbound_message(self, conversation_id, message_id):
+            return {"id": message_id, "text": "Synthetic inbound"}
+
+        def call_tool(self, tool_name, *, conversation_id, arguments):
+            self.tool_calls.append(tool_name)
+            raise AssertionError("a failed model turn must not retry a tool")
+
+    class FailingAgent:
+        def invoke(self, *_args, **_kwargs):
+            raise RuntimeError("SYNTHETIC_RUNTIME_FAILURE")
+
+    gateway = Gateway()
+    runtime = SalesAgentRuntime(gateway=gateway, settings=_settings())
+    runtime._build_agent = lambda *_args, **_kwargs: FailingAgent()
+
+    with pytest.raises(SalesAgentExecutionError) as failure:
+        runtime.turn(
+            SalesAgentTurnRequest(conversation_id=42, latest_inbound_message_id=7)
+        )
+
+    assert failure.value.diagnostic.as_dict() == {
+        "stage": "model_execution",
+        "category": "unknown",
+        "partial_business_effects": False,
+    }
+    assert gateway.tool_calls == []
 
 
 def test_missing_openrouter_key_fails_closed_before_provider_execution(

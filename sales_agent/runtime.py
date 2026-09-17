@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from dataclasses import dataclass
 from time import monotonic, perf_counter_ns
 from typing import TYPE_CHECKING, Any, Callable
@@ -21,6 +22,7 @@ from sales_agent.config import (
     get_settings,
 )
 from sales_agent.schemas import (
+    MUTATION_TOOL_NAMES,
     AgentUnavailableError,
     GatewayError,
     InboundMessage,
@@ -55,6 +57,8 @@ class _TurnTelemetry:
     model_calls: int = 0
     tool_calls: int = 0
     tool_failures: int = 0
+    mutating_tool_calls: int = 0
+    successful_mutating_tool_calls: int = 0
 
     def as_dict(self, *, latency_ms: int, outcome: str) -> dict[str, Any]:
         return {
@@ -73,6 +77,15 @@ class _TurnTelemetry:
 class SalesAgentExecutionError(RuntimeError):
     """A safe, non-content-bearing agent execution failure."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic: "SalesAgentDiagnostic | None" = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic = diagnostic
+
 
 class SalesAgentProviderTimeout(SalesAgentExecutionError):
     """The configured model provider exceeded one bounded request."""
@@ -80,6 +93,210 @@ class SalesAgentProviderTimeout(SalesAgentExecutionError):
 
 class SalesAgentTurnTimeout(SalesAgentExecutionError):
     """The complete Sales Agent turn exceeded its configured deadline."""
+
+
+_SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_DIAGNOSTIC_STAGES = frozenset(
+    {
+        "turn_deadline",
+        "inbound_context",
+        "agent_build",
+        "model_execution",
+        "response_validation",
+        "request_boundary",
+        "gateway",
+    }
+)
+_DIAGNOSTIC_CATEGORIES = frozenset(
+    {
+        "provider_authentication",
+        "provider_rate_limited",
+        "provider_invalid_request",
+        "provider_model_unavailable",
+        "provider_server_error",
+        "provider_http_error",
+        "provider_connection",
+        "provider_timeout",
+        "provider_invalid_response",
+        "turn_timeout",
+        "gateway",
+        "runtime_unavailable",
+        "invalid_agent_response",
+        "unknown",
+    }
+)
+
+
+@dataclass(frozen=True)
+class SalesAgentDiagnostic:
+    """Safe, content-free evidence for one failed Sales Agent turn."""
+
+    stage: str
+    category: str
+    upstream_status: int | None = None
+    upstream_request_id: str | None = None
+    elapsed_ms: int | None = None
+    partial_business_effects: bool | None = None
+
+    def as_dict(self, *, elapsed_ms: int | None = None) -> dict[str, Any]:
+        """Return only allowlisted, bounded diagnostic fields."""
+        payload: dict[str, Any] = {
+            "stage": (
+                self.stage
+                if isinstance(self.stage, str) and self.stage in _DIAGNOSTIC_STAGES
+                else "request_boundary"
+            ),
+            "category": (
+                self.category
+                if isinstance(self.category, str) and self.category in _DIAGNOSTIC_CATEGORIES
+                else "unknown"
+            ),
+        }
+        status = _safe_status_code(self.upstream_status)
+        request_id = _safe_request_id_value(self.upstream_request_id)
+        if status is not None:
+            payload["upstream_status"] = status
+        if request_id is not None:
+            payload["upstream_request_id"] = request_id
+        measured_elapsed = elapsed_ms if elapsed_ms is not None else self.elapsed_ms
+        if isinstance(measured_elapsed, int) and not isinstance(measured_elapsed, bool):
+            payload["elapsed_ms"] = max(0, measured_elapsed)
+        if isinstance(self.partial_business_effects, bool):
+            payload["partial_business_effects"] = self.partial_business_effects
+        return payload
+
+
+def _safe_status_code(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and 100 <= value <= 599:
+        return value
+    return None
+
+
+def _safe_request_id_value(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    return candidate if _SAFE_REQUEST_ID.fullmatch(candidate) else None
+
+
+def _is_openai_exception(exc: BaseException, module: Any, name: str) -> bool:
+    exception_type = getattr(module, name, None)
+    return isinstance(exception_type, type) and isinstance(exc, exception_type)
+
+
+def _partial_business_effects(telemetry: _TurnTelemetry) -> bool | None:
+    if telemetry.successful_mutating_tool_calls > 0:
+        return True
+    if telemetry.mutating_tool_calls > 0:
+        return None
+    return False
+
+
+def diagnostic_for_exception(
+    exc: BaseException,
+    *,
+    stage: str,
+    partial_business_effects: bool | None = None,
+) -> SalesAgentDiagnostic:
+    """Classify known SDK/runtime failures without retaining exception text."""
+    existing = getattr(exc, "diagnostic", None)
+    if isinstance(existing, SalesAgentDiagnostic):
+        return existing
+
+    source = exc
+    if isinstance(exc, SalesAgentExecutionError) and exc.__cause__ is not None:
+        source = exc.__cause__
+
+    if isinstance(source, SalesAgentTurnTimeout) or isinstance(exc, SalesAgentTurnTimeout):
+        return SalesAgentDiagnostic(
+            stage=stage,
+            category="turn_timeout",
+            partial_business_effects=partial_business_effects,
+        )
+    if isinstance(source, GatewayError):
+        return SalesAgentDiagnostic(
+            stage=stage,
+            category="gateway",
+            upstream_status=_safe_status_code(source.status_code),
+            partial_business_effects=partial_business_effects,
+        )
+    if isinstance(source, AgentUnavailableError):
+        return SalesAgentDiagnostic(
+            stage=stage,
+            category="runtime_unavailable",
+            partial_business_effects=partial_business_effects,
+        )
+    if isinstance(source, ValueError):
+        category = (
+            "invalid_agent_response"
+            if stage == "response_validation"
+            else "unknown"
+        )
+        return SalesAgentDiagnostic(
+            stage=stage,
+            category=category,
+            partial_business_effects=partial_business_effects,
+        )
+    if _is_timeout_exception(source) or isinstance(exc, SalesAgentProviderTimeout):
+        return SalesAgentDiagnostic(
+            stage=stage,
+            category="provider_timeout",
+            partial_business_effects=partial_business_effects,
+        )
+
+    try:
+        import openai
+    except ImportError:  # pragma: no cover - openai is part of langchain-openai
+        openai = None
+
+    if openai is not None:
+        request_id = _safe_request_id_value(getattr(source, "request_id", None))
+        status = _safe_status_code(getattr(source, "status_code", None))
+        if _is_openai_exception(source, openai, "AuthenticationError"):
+            category = "provider_authentication"
+        elif _is_openai_exception(source, openai, "PermissionDeniedError"):
+            category = "provider_authentication"
+        elif _is_openai_exception(source, openai, "RateLimitError"):
+            category = "provider_rate_limited"
+        elif _is_openai_exception(source, openai, "BadRequestError"):
+            category = "provider_invalid_request"
+        elif _is_openai_exception(source, openai, "UnprocessableEntityError"):
+            category = "provider_invalid_request"
+        elif _is_openai_exception(source, openai, "NotFoundError"):
+            category = "provider_model_unavailable"
+        elif _is_openai_exception(source, openai, "InternalServerError"):
+            category = "provider_server_error"
+        elif _is_openai_exception(source, openai, "APIResponseValidationError"):
+            category = "provider_invalid_response"
+        elif _is_openai_exception(source, openai, "APIConnectionError"):
+            category = "provider_connection"
+        elif _is_openai_exception(source, openai, "APIStatusError"):
+            category = {
+                400: "provider_invalid_request",
+                401: "provider_authentication",
+                403: "provider_authentication",
+                404: "provider_model_unavailable",
+                422: "provider_invalid_request",
+                429: "provider_rate_limited",
+            }.get(status, "provider_server_error" if status and status >= 500 else "provider_http_error")
+        else:
+            category = None
+        if category is not None:
+            return SalesAgentDiagnostic(
+                stage=stage,
+                category=category,
+                upstream_status=status,
+                upstream_request_id=request_id,
+                partial_business_effects=partial_business_effects,
+            )
+
+    return SalesAgentDiagnostic(
+        stage=stage,
+        category="unknown",
+        partial_business_effects=partial_business_effects,
+    )
 
 
 def _is_timeout_exception(exc: BaseException) -> bool:
@@ -175,17 +392,23 @@ def _build_middleware(
     def telemetry_tool_call(request, handler):
         ensure_deadline()
         telemetry.tool_calls += 1
+        tool_call = getattr(request, "tool_call", {})
+        tool_name = tool_call.get("name") if isinstance(tool_call, dict) else None
+        is_mutating = tool_name in MUTATION_TOOL_NAMES
+        if is_mutating:
+            telemetry.mutating_tool_calls += 1
         try:
             result = handler(request)
-            ensure_deadline()
             if _tool_result_failed(result):
                 telemetry.tool_failures += 1
+            elif is_mutating:
+                telemetry.successful_mutating_tool_calls += 1
+            ensure_deadline()
             return result
         except SalesAgentTurnTimeout:
             raise
         except Exception:
             telemetry.tool_failures += 1
-            tool_call = getattr(request, "tool_call", {})
             tool_call_id = tool_call.get("id", "unknown") if isinstance(tool_call, dict) else "unknown"
             return ToolMessage(
                 content="The backend tool failed safely. Request human reception if needed.",
@@ -377,8 +600,10 @@ class SalesAgentRuntime:
             model=self.model_name,
         )
         outcome = "error"
+        stage = "turn_deadline"
         try:
             self._ensure_turn_deadline(deadline)
+            stage = "inbound_context"
             try:
                 inbound = self.gateway.load_latest_inbound_message(
                     request.conversation_id,
@@ -390,6 +615,7 @@ class SalesAgentRuntime:
             if isinstance(inbound, dict):
                 inbound = InboundMessage.model_validate(inbound)
             self._ensure_turn_deadline(deadline)
+            stage = "agent_build"
             agent = self._build_agent(
                 request.conversation_id,
                 telemetry,
@@ -397,11 +623,13 @@ class SalesAgentRuntime:
             )
             self.agent = agent
             self._ensure_turn_deadline(deadline)
+            stage = "model_execution"
             result = agent.invoke(
                 {"messages": [{"role": "user", "content": inbound.text}]},
                 config=self.invoke_config(request.conversation_id),
             )
             self._ensure_turn_deadline(deadline)
+            stage = "response_validation"
             structured = result.get("structured_response") if isinstance(result, dict) else None
             if isinstance(structured, SalesAgentResponse):
                 response = structured
@@ -415,11 +643,21 @@ class SalesAgentRuntime:
                 outcome=response.outcome,
                 handoff=response.handoff,
             )
-        except SalesAgentTurnTimeout:
+        except SalesAgentTurnTimeout as exc:
             outcome = "timeout"
+            exc.diagnostic = diagnostic_for_exception(
+                exc,
+                stage=stage,
+                partial_business_effects=_partial_business_effects(telemetry),
+            )
             raise
-        except SalesAgentProviderTimeout:
+        except SalesAgentProviderTimeout as exc:
             outcome = "provider_timeout"
+            exc.diagnostic = diagnostic_for_exception(
+                exc,
+                stage=stage,
+                partial_business_effects=_partial_business_effects(telemetry),
+            )
             raise
         except Exception as exc:
             try:
@@ -447,13 +685,26 @@ class SalesAgentRuntime:
                 )
             if _is_timeout_exception(exc):
                 outcome = "provider_timeout"
+                diagnostic = diagnostic_for_exception(
+                    exc,
+                    stage=stage,
+                    partial_business_effects=_partial_business_effects(telemetry),
+                )
                 raise SalesAgentProviderTimeout(
-                    "The model provider request exceeded its configured timeout."
+                    "The model provider request exceeded its configured timeout.",
+                    diagnostic=diagnostic,
                 ) from exc
+            diagnostic = diagnostic_for_exception(
+                exc,
+                stage=stage,
+                partial_business_effects=_partial_business_effects(telemetry),
+            )
             if isinstance(exc, (GatewayError, AgentUnavailableError, ValueError)):
+                setattr(exc, "diagnostic", diagnostic)
                 raise
             raise SalesAgentExecutionError(
-                "The Sales Agent could not complete this turn safely."
+                "The Sales Agent could not complete this turn safely.",
+                diagnostic=diagnostic,
             ) from exc
         finally:
             latency_ms = max(0, (perf_counter_ns() - started_ns) // 1_000_000)
@@ -465,9 +716,11 @@ class SalesAgentRuntime:
 
 
 __all__ = [
+    "SalesAgentDiagnostic",
     "SalesAgentExecutionError",
     "SalesAgentProviderTimeout",
     "SalesAgentRuntime",
     "SalesAgentTurnTimeout",
     "SalesAgentTurnRequest",
+    "diagnostic_for_exception",
 ]
