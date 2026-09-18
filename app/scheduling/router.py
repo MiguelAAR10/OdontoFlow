@@ -19,20 +19,34 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from app.context import resolve_http_context
+from app.agent_tools.booking import (
+    OP_PROPOSAL_CONFIRM,
+    OP_PROPOSAL_DECLINE,
+    confirm_contact_booking_proposal,
+    decline_contact_booking_proposal,
+    get_contact_booking_proposal,
+    list_contact_booking_proposals,
+)
+from app.context import require_authenticated_context, resolve_http_context
 from app.db import get_db
 from app.errors import AppError, ErrorCode
+from app.iam.context import ExecutionContext
 from app.idempotency.service import (
     OP_APPOINTMENTS_BOOK,
     OP_APPOINTMENTS_CANCEL,
     OP_APPOINTMENTS_RESCHEDULE,
     run_idempotent_command,
 )
+from app.messaging.router import require_uuid4_idempotency_key
+from app.scheduling.models import AppointmentProposal
 from app.scheduling.query import (
     create_availability_rule,
     create_schedule_block,
@@ -42,6 +56,9 @@ from app.scheduling.schemas import (
     AppointmentCancel,
     AppointmentCreate,
     AppointmentListItem,
+    AppointmentProposalConfirm,
+    AppointmentProposalDecline,
+    AppointmentProposalRead,
     AppointmentRead,
     AppointmentReschedule,
     AvailabilityRuleCreate,
@@ -299,6 +316,170 @@ def cancel_appointment_route(
         response.headers[REPLAY_HEADER] = "true"
         return _appointment_read_from_outcome(outcome.outcome)
     return outcome.result
+
+
+# --- Appointment proposals: human review of AIRY's persisted proposals -----
+#
+# CORE-01 SubCard B. Confirm/decline reuse the exact same
+# ``AppointmentProposal`` row and ``(conversation_id, confirmation_token)``
+# discriminator the reception-agent tool call path uses
+# (``app/agent_tools/booking.py``); the transport job here is authentication,
+# the human-only allow-list gate, and rendering the settled row.
+
+
+def _authenticate_reviewer(request: Request) -> ExecutionContext:
+    """Resolve a real, credential-backed context for these four routes only.
+
+    Deliberately calls :func:`require_authenticated_context` as a plain
+    function instead of wiring it as a FastAPI ``Depends``/``Security``: doing
+    the latter makes FastAPI attach an OpenAPI ``security`` requirement to the
+    operation, which ``test_security_boundary.py`` reserves for the
+    ``/internal/`` and ``/agent-tools/`` integration surfaces. Every other
+    scheduling route still resolves through ``resolve_http_context`` and its
+    ``ERP_ANONYMOUS_COMPAT`` fallback (unchanged, and not this card's seam to
+    close — that is CORE-02); these four are the one part of this router that
+    must never accept that fallback (F-agent-03 / amendment 2).
+    """
+    header = request.headers.get("Authorization")
+    credentials = None
+    if header:
+        scheme, _, param = header.partition(" ")
+        if scheme.lower() == "bearer" and param:
+            credentials = HTTPAuthorizationCredentials(scheme=scheme, credentials=param)
+    return require_authenticated_context(request, credentials)
+
+
+def _require_human_reviewer(ctx: ExecutionContext) -> None:
+    """Allow-list, not a deny-list on ``!= "agent"``.
+
+    Only an authenticated human principal may confirm or decline a proposal
+    on this surface, so the ``ERP_ANONYMOUS_COMPAT`` -> seeded ``system``
+    fallback can never reach it either — unlike the agent-tool call path,
+    where an agent credential is a legitimate (if narrowly refused) caller.
+    """
+    if ctx.principal_type != "human":
+        raise AppError(
+            ErrorCode.INVALID_INPUT,
+            "Only an authenticated human principal may confirm or decline "
+            "an appointment proposal.",
+        )
+
+
+def _load_proposal_for_response(
+    db: Session,
+    *,
+    ctx: ExecutionContext,
+    conversation_id: int,
+    confirmation_token: UUID,
+) -> AppointmentProposal:
+    """Render the settled row after a confirm/decline command committed.
+
+    Both commands are looked up by ``(conversation_id, confirmation_token)``
+    regardless of whether the call executed fresh or replayed an idempotency
+    claim, so re-reading the row is simpler and just as correct as branching
+    on ``CommandOutcome`` — the row is guaranteed committed by the time this
+    runs, or the command raised.
+    """
+    proposal = db.scalar(
+        select(AppointmentProposal).where(
+            AppointmentProposal.organization_id == ctx.organization_id,
+            AppointmentProposal.conversation_id == conversation_id,
+            AppointmentProposal.confirmation_token == confirmation_token,
+        )
+    )
+    if proposal is None:
+        raise AppError(ErrorCode.NOT_FOUND, "Appointment proposal not found.")
+    return proposal
+
+
+@router.get(
+    "/scheduling/appointment-proposals",
+    response_model=list[AppointmentProposalRead],
+)
+def list_appointment_proposals_route(
+    request: Request, db: Session = Depends(get_db)
+) -> list[AppointmentProposalRead]:
+    ctx = _authenticate_reviewer(request)
+    return list_contact_booking_proposals(db, ctx=ctx)
+
+
+@router.get(
+    "/scheduling/appointment-proposals/{proposal_id}",
+    response_model=AppointmentProposalRead,
+)
+def get_appointment_proposal_route(
+    proposal_id: int, request: Request, db: Session = Depends(get_db)
+) -> AppointmentProposalRead:
+    ctx = _authenticate_reviewer(request)
+    return get_contact_booking_proposal(db, proposal_id, ctx=ctx)
+
+
+@router.post(
+    "/scheduling/appointment-proposals/confirm",
+    response_model=AppointmentProposalRead,
+)
+def confirm_appointment_proposal_route(
+    payload: AppointmentProposalConfirm,
+    request: Request,
+    db: Session = Depends(get_db),
+    idempotency_key: str = Depends(require_uuid4_idempotency_key),
+) -> AppointmentProposalRead:
+    ctx = _authenticate_reviewer(request)
+    _require_human_reviewer(ctx)
+    params = {
+        "conversation_id": payload.conversation_id,
+        "confirmation_token": str(payload.confirmation_token),
+    }
+    run_idempotent_command(
+        db,
+        operation=confirm_contact_booking_proposal,
+        operation_name=OP_PROPOSAL_CONFIRM,
+        key=idempotency_key,
+        ctx=ctx,
+        params=params,
+        conversation_id=payload.conversation_id,
+        confirmation_token=payload.confirmation_token,
+    )
+    return _load_proposal_for_response(
+        db,
+        ctx=ctx,
+        conversation_id=payload.conversation_id,
+        confirmation_token=payload.confirmation_token,
+    )
+
+
+@router.post(
+    "/scheduling/appointment-proposals/decline",
+    response_model=AppointmentProposalRead,
+)
+def decline_appointment_proposal_route(
+    payload: AppointmentProposalDecline,
+    request: Request,
+    db: Session = Depends(get_db),
+    idempotency_key: str = Depends(require_uuid4_idempotency_key),
+) -> AppointmentProposalRead:
+    ctx = _authenticate_reviewer(request)
+    _require_human_reviewer(ctx)
+    params = {
+        "conversation_id": payload.conversation_id,
+        "confirmation_token": str(payload.confirmation_token),
+    }
+    run_idempotent_command(
+        db,
+        operation=decline_contact_booking_proposal,
+        operation_name=OP_PROPOSAL_DECLINE,
+        key=idempotency_key,
+        ctx=ctx,
+        params=params,
+        conversation_id=payload.conversation_id,
+        confirmation_token=payload.confirmation_token,
+    )
+    return _load_proposal_for_response(
+        db,
+        ctx=ctx,
+        conversation_id=payload.conversation_id,
+        confirmation_token=payload.confirmation_token,
+    )
 
 
 @router.post("/appointments/{appointment_id}/reschedule", response_model=AppointmentRead, status_code=200)

@@ -21,7 +21,7 @@ from app.catalog.models import Service
 from app.commercial.models import Lead
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
-from app.iam.permissions import CONTACT_APPOINTMENTS_BOOK
+from app.iam.permissions import APPOINTMENTS_READ, CONTACT_APPOINTMENTS_BOOK
 from app.iam.service import require_permission
 from app.idempotency.service import (
     IdempotencyClaim,
@@ -43,8 +43,10 @@ PROPOSAL_TTL = timedelta(minutes=15)
 PROPOSAL_ENTITY_TYPE = "appointment_proposal"
 PROPOSAL_CREATED_ACTION = "appointment_proposal.created"
 PROPOSAL_CONFIRMED_ACTION = "appointment_proposal.confirmed"
+PROPOSAL_DECLINED_ACTION = "appointment_proposal.declined"
 OP_PROPOSAL_CREATE = "contact_appointments.propose"
 OP_PROPOSAL_CONFIRM = "contact_appointments.confirm"
+OP_PROPOSAL_DECLINE = "contact_appointments.decline"
 
 
 def _load_conversation_and_contact(
@@ -96,6 +98,23 @@ def _require_later_inbound_message(
         raise AppError(
             ErrorCode.INVALID_INPUT,
             "Appointment confirmation requires a later inbound message.",
+        )
+
+
+def require_human_confirmation(ctx: ExecutionContext) -> None:
+    """Refuse an automated agent principal, whatever else is true of the proposal.
+
+    A later inbound message is not itself verified patient acceptance, so an
+    agent may never confirm a booking on the contact's behalf. Extracted so
+    AGENT-03 can reuse the exact same rule, and called ahead of every other
+    branch in :func:`confirm_contact_booking_proposal` (including the
+    already-confirmed shortcut) so an agent retry can never observe a
+    confirmed outcome.
+    """
+    if ctx.principal_type == "agent":
+        raise AppError(
+            ErrorCode.INVALID_INPUT,
+            "Automatic appointment confirmation requires verified patient acceptance.",
         )
 
 
@@ -283,60 +302,53 @@ def confirm_contact_booking_proposal(
     *,
     ctx: ExecutionContext,
     conversation_id: int,
-    proposal_id: int,
     confirmation_token: UUID,
+    proposal_id: int | None = None,
     idempotency: IdempotencyClaim | None = None,
 ) -> Appointment:
-    """Atomically consume a confirmed proposal and create the appointment."""
+    """Atomically consume a confirmed proposal and create the appointment.
+
+    ``proposal_id`` is optional: the agent-tool call site still supplies it
+    (its own extra discriminator), but the human-review HTTP surface (PF0
+    CORE-01) identifies the proposal by ``(conversation_id,
+    confirmation_token)`` alone, exactly like ``decline_contact_booking_proposal``.
+    """
     now = datetime.now(UTC)
     with session.begin():
         receipt = claim_receipt(session, ctx, idempotency)
-        require_permission(session, ctx, CONTACT_APPOINTMENTS_BOOK)
-        proposal = session.scalar(
-            select(AppointmentProposal)
-            .where(
-                AppointmentProposal.organization_id == ctx.organization_id,
-                AppointmentProposal.id == proposal_id,
-                AppointmentProposal.conversation_id == conversation_id,
-                AppointmentProposal.confirmation_token == confirmation_token,
-            )
-            .with_for_update()
+        statement = select(AppointmentProposal).where(
+            AppointmentProposal.organization_id == ctx.organization_id,
+            AppointmentProposal.conversation_id == conversation_id,
+            AppointmentProposal.confirmation_token == confirmation_token,
         )
+        if proposal_id is not None:
+            statement = statement.where(AppointmentProposal.id == proposal_id)
+        proposal = session.scalar(statement.with_for_update())
         if proposal is None:
             raise AppError(ErrorCode.NOT_FOUND, "Appointment proposal not found.")
-        if proposal.status == "confirmed" and proposal.appointment_id is not None:
-            appointment = session.scalar(
-                select(Appointment).where(
-                    Appointment.organization_id == ctx.organization_id,
-                    Appointment.id == proposal.appointment_id,
-                )
-            )
-            if appointment is None:
-                raise AppError(ErrorCode.NOT_FOUND, "Appointment not found.")
-            settle_receipt(
-                receipt,
-                resource_type="appointment",
-                resource_id=str(appointment.id),
-                outcome_json=_appointment_outcome(appointment),
-            )
-            return appointment
+        require_permission(
+            session, ctx, CONTACT_APPOINTMENTS_BOOK, location_id=proposal.location_id
+        )
+        # Ahead of every other branch (including the status check below) so an
+        # agent retry can never observe a confirmed outcome (F-agent-03).
+        require_human_confirmation(ctx)
         if proposal.status != "pending" or proposal.expires_at <= now:
+            # Covers "already confirmed" (by this caller or a concurrent
+            # winner) and "already expired/declined" alike: once the proposal
+            # has left ``pending``, re-confirming it is not a safe no-op —
+            # only an exact idempotency-key replay (handled by
+            # ``run_idempotent_command`` before this function ever runs a
+            # second time) may return the original outcome.
             raise AppError(
                 ErrorCode.INVALID_INPUT,
                 "The appointment proposal is no longer confirmable.",
             )
-        _require_later_inbound_message(
-            session,
-            conversation_id=conversation_id,
-            proposal_created_at=proposal.created_at,
-            ctx=ctx,
-        )
-        # The principal type is resolved from the authenticated credential;
-        # a later inbound message is not itself verified patient acceptance.
-        if ctx.principal_type == "agent":
-            raise AppError(
-                ErrorCode.INVALID_INPUT,
-                "Automatic appointment confirmation requires verified patient acceptance.",
+        if ctx.principal_type != "human":
+            _require_later_inbound_message(
+                session,
+                conversation_id=conversation_id,
+                proposal_created_at=proposal.created_at,
+                ctx=ctx,
             )
 
         appointment = _book_appointment_core(
@@ -494,3 +506,120 @@ def run_confirm_appointment_tool(
         },
         "replayed": outcome.replayed,
     }
+
+
+def decline_contact_booking_proposal(
+    session: Session,
+    *,
+    ctx: ExecutionContext,
+    conversation_id: int,
+    confirmation_token: UUID,
+    idempotency: IdempotencyClaim | None = None,
+) -> AppointmentProposal:
+    """Human review's counterpart to :func:`confirm_contact_booking_proposal`.
+
+    Declining reuses the existing ``expired`` status (no new status value, no
+    migration): a pending proposal transitions to ``expired`` exactly like one
+    that timed out, an already-``expired`` proposal is a no-op replay (no
+    duplicate audit row), and an already-``confirmed`` proposal is refused —
+    an appointment already exists and cannot be un-created by declining.
+    """
+    now = datetime.now(UTC)
+    with session.begin():
+        receipt = claim_receipt(session, ctx, idempotency)
+        proposal = session.scalar(
+            select(AppointmentProposal)
+            .where(
+                AppointmentProposal.organization_id == ctx.organization_id,
+                AppointmentProposal.conversation_id == conversation_id,
+                AppointmentProposal.confirmation_token == confirmation_token,
+            )
+            .with_for_update()
+        )
+        if proposal is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Appointment proposal not found.")
+        require_permission(
+            session, ctx, CONTACT_APPOINTMENTS_BOOK, location_id=proposal.location_id
+        )
+        require_human_confirmation(ctx)
+        if proposal.status == "confirmed":
+            raise AppError(
+                ErrorCode.INVALID_INPUT,
+                "A confirmed appointment proposal cannot be declined.",
+            )
+        if proposal.status != "expired":
+            before_state = {"status": proposal.status}
+            proposal.status = "expired"
+            proposal.updated_at = now
+            conversation = session.scalar(
+                select(Conversation).where(
+                    Conversation.organization_id == ctx.organization_id,
+                    Conversation.id == conversation_id,
+                )
+            )
+            if conversation is not None:
+                conversation.status = "open"
+                conversation.updated_at = now
+            record_event(
+                session,
+                ctx=ctx,
+                entity_type=PROPOSAL_ENTITY_TYPE,
+                entity_id=str(proposal.id),
+                action=PROPOSAL_DECLINED_ACTION,
+                before_state=before_state,
+                after_state={"status": "expired"},
+            )
+        settle_receipt(
+            receipt,
+            resource_type=PROPOSAL_ENTITY_TYPE,
+            resource_id=str(proposal.id),
+            outcome_json=_proposal_outcome(proposal),
+        )
+    return proposal
+
+
+def list_contact_booking_proposals(
+    session: Session,
+    *,
+    ctx: ExecutionContext,
+    location_id: int | None = None,
+) -> list[AppointmentProposal]:
+    """Every proposal in the acting organization, for human review (CORE-01).
+
+    Tenant scoping is part of the query (§7.4), exactly like
+    ``list_appointments``; an optional ``location_id`` doubles as the location
+    scope for the permission check.
+    """
+    require_permission(session, ctx, APPOINTMENTS_READ, location_id=location_id)
+    statement = (
+        select(AppointmentProposal)
+        .where(AppointmentProposal.organization_id == ctx.organization_id)
+        .order_by(AppointmentProposal.created_at)
+    )
+    if location_id is not None:
+        statement = statement.where(AppointmentProposal.location_id == location_id)
+    return list(session.scalars(statement))
+
+
+def get_contact_booking_proposal(
+    session: Session, proposal_id: int, *, ctx: ExecutionContext
+) -> AppointmentProposal:
+    """One proposal by id, tenant-scoped, for human review (CORE-01).
+
+    The tenant filter is part of the query, so another organization's
+    proposal is ``NOT_FOUND`` exactly like a non-existent id (E8). The
+    permission check runs against the proposal's own location (F-4), exactly
+    like ``get_appointment``.
+    """
+    proposal = session.scalar(
+        select(AppointmentProposal).where(
+            AppointmentProposal.organization_id == ctx.organization_id,
+            AppointmentProposal.id == proposal_id,
+        )
+    )
+    if proposal is None:
+        raise AppError(ErrorCode.NOT_FOUND, "Appointment proposal not found.")
+    require_permission(
+        session, ctx, APPOINTMENTS_READ, location_id=proposal.location_id
+    )
+    return proposal
