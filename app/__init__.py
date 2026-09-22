@@ -51,13 +51,30 @@ def create_app() -> FastAPI:
 
     # The integration surface is the trust boundary for n8n and agents.
     # ``/health`` stays open on purpose: monitoring must not need a credential.
-    # ERP routers intentionally retain the explicit, temporary
-    # ``ERP_ANONYMOUS_COMPAT`` fallback in ``resolve_http_context`` so the
-    # existing frontend can keep working during the pilot.
+    #
+    # CORE-02: the Lead-to-Appointment and Reception/Scheduling business
+    # routers (commercial, catalog, organization, clinical, scheduling) are
+    # gated here too. They used to rely solely on the per-endpoint
+    # ``resolve_http_context`` call, which falls back to the seeded ``system``
+    # identity whenever ``ERP_ANONYMOUS_COMPAT`` is enabled — an anonymous
+    # caller with network access was a superuser over every one of those
+    # routes. The router-level dependency authenticates first and caches the
+    # resolved context on ``request.state`` (see ``require_authenticated_context``),
+    # so ``resolve_http_context`` inside each handler — and the four
+    # ``scheduling_router`` proposal routes that call it directly for their
+    # human-only gate — simply reuses it instead of authenticating twice.
+    #
+    # Economics and inventory remain on the unmodified compatibility path:
+    # they are unrelated legacy ERP surfaces this card does not close.
     authenticated = [Depends(require_authenticated_context)]
-    integration_routers = (
+    authenticated_routers = (
         agent_tools_router,
+        catalog_router,
+        clinical_router,
+        commercial_router,
         messaging_router,
+        organization_router,
+        scheduling_router,
     )
     for business_router in (
         agent_tools_router,
@@ -70,7 +87,7 @@ def create_app() -> FastAPI:
         organization_router,
         scheduling_router,
     ):
-        dependencies = authenticated if business_router in integration_routers else []
+        dependencies = authenticated if business_router in authenticated_routers else []
         app.include_router(business_router, dependencies=dependencies)
 
     install_security_openapi(app)

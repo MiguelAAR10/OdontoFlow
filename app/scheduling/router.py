@@ -22,7 +22,6 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response
-from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
@@ -35,7 +34,7 @@ from app.agent_tools.booking import (
     get_contact_booking_proposal,
     list_contact_booking_proposals,
 )
-from app.context import require_authenticated_context, resolve_http_context
+from app.context import resolve_http_context
 from app.db import get_db
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
@@ -325,37 +324,23 @@ def cancel_appointment_route(
 # discriminator the reception-agent tool call path uses
 # (``app/agent_tools/booking.py``); the transport job here is authentication,
 # the human-only allow-list gate, and rendering the settled row.
-
-
-def _authenticate_reviewer(request: Request) -> ExecutionContext:
-    """Resolve a real, credential-backed context for these four routes only.
-
-    Deliberately calls :func:`require_authenticated_context` as a plain
-    function instead of wiring it as a FastAPI ``Depends``/``Security``: doing
-    the latter makes FastAPI attach an OpenAPI ``security`` requirement to the
-    operation, which ``test_security_boundary.py`` reserves for the
-    ``/internal/`` and ``/agent-tools/`` integration surfaces. Every other
-    scheduling route still resolves through ``resolve_http_context`` and its
-    ``ERP_ANONYMOUS_COMPAT`` fallback (unchanged, and not this card's seam to
-    close — that is CORE-02); these four are the one part of this router that
-    must never accept that fallback (F-agent-03 / amendment 2).
-    """
-    header = request.headers.get("Authorization")
-    credentials = None
-    if header:
-        scheme, _, param = header.partition(" ")
-        if scheme.lower() == "bearer" and param:
-            credentials = HTTPAuthorizationCredentials(scheme=scheme, credentials=param)
-    return require_authenticated_context(request, credentials)
+#
+# CORE-02 gates this whole router with ``require_authenticated_context`` at
+# the ``app.include_router`` level (see ``app/__init__.py``), so by the time
+# any handler below runs, ``request.state.execution_context`` is already the
+# credential-backed context — never the ``ERP_ANONYMOUS_COMPAT`` fallback,
+# because an unauthenticated caller never reaches the handler at all. These
+# four routes therefore just read it via ``resolve_http_context`` like every
+# other route in this file; calling ``require_authenticated_context`` again
+# here would re-authenticate the same request a second time.
 
 
 def _require_human_reviewer(ctx: ExecutionContext) -> None:
     """Allow-list, not a deny-list on ``!= "agent"``.
 
     Only an authenticated human principal may confirm or decline a proposal
-    on this surface, so the ``ERP_ANONYMOUS_COMPAT`` -> seeded ``system``
-    fallback can never reach it either — unlike the agent-tool call path,
-    where an agent credential is a legitimate (if narrowly refused) caller.
+    on this surface — unlike the agent-tool call path, where an agent
+    credential is a legitimate (if narrowly refused) caller.
     """
     if ctx.principal_type != "human":
         raise AppError(
@@ -399,7 +384,7 @@ def _load_proposal_for_response(
 def list_appointment_proposals_route(
     request: Request, db: Session = Depends(get_db)
 ) -> list[AppointmentProposalRead]:
-    ctx = _authenticate_reviewer(request)
+    ctx = resolve_http_context(request)
     return list_contact_booking_proposals(db, ctx=ctx)
 
 
@@ -410,7 +395,7 @@ def list_appointment_proposals_route(
 def get_appointment_proposal_route(
     proposal_id: int, request: Request, db: Session = Depends(get_db)
 ) -> AppointmentProposalRead:
-    ctx = _authenticate_reviewer(request)
+    ctx = resolve_http_context(request)
     return get_contact_booking_proposal(db, proposal_id, ctx=ctx)
 
 
@@ -424,7 +409,7 @@ def confirm_appointment_proposal_route(
     db: Session = Depends(get_db),
     idempotency_key: str = Depends(require_uuid4_idempotency_key),
 ) -> AppointmentProposalRead:
-    ctx = _authenticate_reviewer(request)
+    ctx = resolve_http_context(request)
     _require_human_reviewer(ctx)
     params = {
         "conversation_id": payload.conversation_id,
@@ -458,7 +443,7 @@ def decline_appointment_proposal_route(
     db: Session = Depends(get_db),
     idempotency_key: str = Depends(require_uuid4_idempotency_key),
 ) -> AppointmentProposalRead:
-    ctx = _authenticate_reviewer(request)
+    ctx = resolve_http_context(request)
     _require_human_reviewer(ctx)
     params = {
         "conversation_id": payload.conversation_id,

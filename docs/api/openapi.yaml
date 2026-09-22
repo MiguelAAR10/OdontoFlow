@@ -206,6 +206,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -311,6 +313,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -328,6 +332,8 @@ paths:
     post:
       summary: Create Patient Route
       operationId: create_patient_route_patients_post
+      security:
+      - IntegrationBearer: []
       requestBody:
         required: true
         content:
@@ -433,6 +439,8 @@ paths:
     get:
       summary: List Patients Route
       operationId: list_patients_route_patients_get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: search
         in: query
@@ -534,6 +542,8 @@ paths:
     get:
       summary: Get Patient Route
       operationId: get_patient_route_patients__patient_id__get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: patient_id
         in: path
@@ -630,6 +640,8 @@ paths:
     post:
       summary: Create Visit Route
       operationId: create_visit_route_visits_post
+      security:
+      - IntegrationBearer: []
       requestBody:
         required: true
         content:
@@ -735,6 +747,8 @@ paths:
     get:
       summary: List Visits Route
       operationId: list_visits_route_visits_get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: patient_id
         in: query
@@ -836,6 +850,8 @@ paths:
     get:
       summary: Get Visit Route
       operationId: get_visit_route_visits__visit_id__get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: visit_id
         in: path
@@ -932,6 +948,8 @@ paths:
     get:
       summary: List Visit Executions Route
       operationId: list_visit_executions_route_visits__visit_id__executions_get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: visit_id
         in: path
@@ -1031,6 +1049,8 @@ paths:
     post:
       summary: Create Service Execution Route
       operationId: create_service_execution_route_visits__visit_id__executions_post
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: visit_id
         in: path
@@ -1143,6 +1163,8 @@ paths:
     get:
       summary: List Executions Route
       operationId: list_executions_route_executions_get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: visit_id
         in: query
@@ -1282,6 +1304,8 @@ paths:
     get:
       summary: List Leads Route
       operationId: list_leads_route_leads_get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: search
         in: query
@@ -1390,6 +1414,8 @@ paths:
     post:
       summary: Create Lead Route
       operationId: create_lead_route_leads_post
+      security:
+      - IntegrationBearer: []
       requestBody:
         required: true
         content:
@@ -1496,6 +1522,8 @@ paths:
     get:
       summary: Get Lead Route
       operationId: get_lead_route_leads__lead_id__get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: lead_id
         in: path
@@ -5116,6 +5144,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -5221,6 +5251,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -5327,6 +5359,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -5433,6 +5467,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -5450,6 +5486,8 @@ paths:
     get:
       summary: List Eligible Practitioners Route
       operationId: list_eligible_practitioners_route_practitioners_eligible_get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: service_id
         in: query
@@ -5645,6 +5683,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -5751,6 +5791,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -5860,6 +5902,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -5888,6 +5932,8 @@ paths:
 
         parameter (X3).'
       operationId: list_appointments_route_appointments_get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: from_date
         in: query
@@ -6014,6 +6060,8 @@ paths:
     post:
       summary: Create Appointment Route
       operationId: create_appointment_route_appointments_post
+      security:
+      - IntegrationBearer: []
       requestBody:
         required: true
         content:
@@ -6120,6 +6168,8 @@ paths:
     get:
       summary: Get Appointment Route
       operationId: get_appointment_route_appointments__appointment_id__get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: appointment_id
         in: path
@@ -6216,6 +6266,8 @@ paths:
     post:
       summary: Cancel Appointment Route
       operationId: cancel_appointment_route_appointments__appointment_id__cancel_post
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: appointment_id
         in: path
@@ -6394,6 +6446,8 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+      security:
+      - IntegrationBearer: []
       parameters:
       - in: header
         name: X-Request-Id
@@ -6411,6 +6465,8 @@ paths:
     get:
       summary: Get Appointment Proposal Route
       operationId: get_appointment_proposal_route_scheduling_appointment_proposals__proposal_id__get
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: proposal_id
         in: path
@@ -6507,6 +6563,8 @@ paths:
     post:
       summary: Confirm Appointment Proposal Route
       operationId: confirm_appointment_proposal_route_scheduling_appointment_proposals_confirm_post
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: Idempotency-Key
         in: header
@@ -6622,6 +6680,8 @@ paths:
     post:
       summary: Decline Appointment Proposal Route
       operationId: decline_appointment_proposal_route_scheduling_appointment_proposals_decline_post
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: Idempotency-Key
         in: header
@@ -6737,6 +6797,8 @@ paths:
     post:
       summary: Reschedule Appointment Route
       operationId: reschedule_appointment_route_appointments__appointment_id__reschedule_post
+      security:
+      - IntegrationBearer: []
       parameters:
       - name: appointment_id
         in: path

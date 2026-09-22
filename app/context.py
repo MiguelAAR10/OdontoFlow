@@ -218,10 +218,15 @@ def resolve_http_context(request: Request) -> ExecutionContext:
     """Return the gated context, or the explicit ERP compatibility context.
 
     Kept as a function with its original signature so the existing call sites
-    are untouched. Integration routes always reach this function after the
-    router-level gate. Ungated ERP routes may use the seeded system identity
-    only while ``ERP_ANONYMOUS_COMPAT`` is explicitly enabled; production
-    settings reject that mode and a disabled flag fails closed with 401.
+    are untouched. Most routers reach this function only after the
+    router-level ``require_authenticated_context`` gate (integration routes,
+    and — since CORE-02 — the whole Lead-to-Appointment / Reception-Scheduling
+    business surface), in which case ``request.state.execution_context`` is
+    already set and this just returns it. Economics and inventory are the
+    remaining ungated, unrelated legacy ERP routers: they may still fall back
+    to the seeded system identity, and only while ``ERP_ANONYMOUS_COMPAT`` is
+    explicitly enabled; production settings reject that mode and a disabled
+    flag fails closed with 401.
     """
     context = getattr(request.state, "execution_context", None)
     if context is not None:

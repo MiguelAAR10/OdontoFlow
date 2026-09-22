@@ -22,13 +22,28 @@ from app import create_app
 from app.config import get_settings
 from app.context import require_authenticated_context
 from app.db import get_db
+from app.economics.router import router as economics_router
 from app.iam.credentials import issue_credential
 from app.iam.models import Membership, Principal, Role, RoleAssignment
+from app.inventory.router import router as inventory_router
 from app.tenancy import BOOTSTRAP_ORGANIZATION_ID
 
 ORG = BOOTSTRAP_ORGANIZATION_ID
 WINDOW_START = "2026-08-10T00:00:00Z"
 WINDOW_END = "2026-08-11T00:00:00Z"
+
+#: CORE-02 closed the ``ERP_ANONYMOUS_COMPAT`` fallback for every
+#: Lead-to-Appointment / Reception-Scheduling business route. Economics
+#: (billing) and inventory are unrelated legacy ERP surfaces this card
+#: deliberately left on the compatibility path — derived from the routers
+#: themselves rather than hardcoded so this stays accurate if either grows a
+#: route.
+UNPROTECTED_LEGACY_ERP_PATHS = {
+    route.path
+    for router in (economics_router, inventory_router)
+    for route in router.routes
+    if isinstance(route, APIRoute)
+}
 
 
 def _app_for(migrated_engine):
@@ -143,7 +158,7 @@ def test_integration_routes_deny_a_member_without_permissions(
     assert response.json()["error"]["code"] == "PERMISSION_DENIED"
 
 
-def test_only_integration_routes_have_the_authentication_dependency():
+def test_only_protected_routes_have_the_authentication_dependency():
     app = create_app()
     public_paths = {"/health"}
     documentation_paths = {app.docs_url, app.redoc_url, app.openapi_url}
@@ -154,8 +169,10 @@ def test_only_integration_routes_have_the_authentication_dependency():
         if route.path in public_paths | documentation_paths:
             continue
         dependencies = {dependency.call for dependency in route.dependant.dependencies}
-        is_integration = route.path.startswith(("/internal/", "/agent-tools/"))
-        assert (require_authenticated_context in dependencies) is is_integration, route.path
+        expects_authentication = route.path not in UNPROTECTED_LEGACY_ERP_PATHS
+        assert (
+            require_authenticated_context in dependencies
+        ) is expects_authentication, route.path
 
 
 def test_routers_cannot_reintroduce_the_system_default_identity():
@@ -179,11 +196,11 @@ def test_openapi_declares_bearer_authentication_on_business_operations():
     for path, path_item in schema["paths"].items():
         if path == "/health":
             continue
-        is_integration = path.startswith(("/internal/", "/agent-tools/"))
+        is_protected = path not in UNPROTECTED_LEGACY_ERP_PATHS
         for method, operation in path_item.items():
             if method.lower() not in {"get", "post", "put", "patch", "delete"}:
                 continue
-            if is_integration:
+            if is_protected:
                 assert {"IntegrationBearer": []} in operation.get("security", []), (
                     method,
                     path,
@@ -318,6 +335,12 @@ def test_production_disables_interactive_docs_and_requires_https(monkeypatch, mi
 
 
 def test_erp_anonymous_compat_defaults_on_in_development(monkeypatch, migrated_engine):
+    """``/products`` (economics) is the unrelated legacy ERP surface CORE-02
+    deliberately left on the compatibility path — see
+    ``UNPROTECTED_LEGACY_ERP_PATHS``. ``/services`` and the rest of the
+    Lead-to-Appointment surface no longer accept this fallback at all
+    (``test_core02_business_auth_boundary.py``).
+    """
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.delenv("ERP_ANONYMOUS_COMPAT", raising=False)
     assert get_settings().erp_anonymous_compat is True
@@ -326,7 +349,7 @@ def test_erp_anonymous_compat_defaults_on_in_development(monkeypatch, migrated_e
         raise_server_exceptions=False,
         base_url="https://testserver",
     ) as client:
-        response = client.get("/services")
+        response = client.get("/products")
     assert response.status_code == 200, response.text
 
 
@@ -339,7 +362,7 @@ def test_erp_anonymous_compat_defaults_off_in_production(monkeypatch, migrated_e
         raise_server_exceptions=False,
         base_url="https://testserver",
     ) as client:
-        response = client.get("/services")
+        response = client.get("/products")
     assert response.status_code == 401, response.text
     assert response.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
 

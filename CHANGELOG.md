@@ -1,5 +1,24 @@
 # OdontoFlow Changelog
 
+## CORE-02 — Close the ERP_ANONYMOUS_COMPAT gap on protected business routes (2026-09-22)
+
+- The Lead-to-Appointment and Reception/Scheduling business routers
+  (commercial, catalog, organization, clinical, scheduling — 27 routes) now
+  require `require_authenticated_context` at the router level, the same gate
+  already applied to `/internal/` and `/agent-tools/`. A missing or invalid
+  credential is rejected with 401 even when `ERP_ANONYMOUS_COMPAT=true`; that
+  flag now only affects the unrelated economics and inventory routers.
+- The four CORE-01 appointment-proposal routes read the router-level
+  resolved context via `resolve_http_context` instead of authenticating a
+  second time; their human-only reviewer gate is unchanged.
+- Regenerated `docs/api/openapi.json`/`openapi.yaml` (additive `security:
+  IntegrationBearer` declarations on the newly protected operations).
+- Added `tests/test_core02_business_auth_boundary.py` (57 focused cases:
+  missing/invalid credential 401 across all 27 routes, an authenticated
+  walk across the full surface, cross-organization denial, and redacted
+  audit evidence). Updated `tests/test_security_boundary.py`'s protected-route
+  assertions to the new boundary.
+
 ## Documentation — Development and agent collaboration (2026-09-17)
 
 - Expanded the backend README with the evidence-first development loop and
