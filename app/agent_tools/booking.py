@@ -14,7 +14,7 @@ from app.agent_tools.schemas import (
     ConfirmAppointmentArguments,
     ProposeAppointmentArguments,
 )
-from app.agent_tools.guards import require_automation_active
+from app.agent_tools.guards import require_automation_active, require_human_confirmation
 from app.agent_tools.reception import ensure_contact_profile
 from app.audit.service import record_event
 from app.catalog.models import Service
@@ -98,23 +98,6 @@ def _require_later_inbound_message(
         raise AppError(
             ErrorCode.INVALID_INPUT,
             "Appointment confirmation requires a later inbound message.",
-        )
-
-
-def require_human_confirmation(ctx: ExecutionContext) -> None:
-    """Refuse an automated agent principal, whatever else is true of the proposal.
-
-    A later inbound message is not itself verified patient acceptance, so an
-    agent may never confirm a booking on the contact's behalf. Extracted so
-    AGENT-03 can reuse the exact same rule, and called ahead of every other
-    branch in :func:`confirm_contact_booking_proposal` (including the
-    already-confirmed shortcut) so an agent retry can never observe a
-    confirmed outcome.
-    """
-    if ctx.principal_type == "agent":
-        raise AppError(
-            ErrorCode.INVALID_INPUT,
-            "Automatic appointment confirmation requires verified patient acceptance.",
         )
 
 

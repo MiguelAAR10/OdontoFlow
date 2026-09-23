@@ -11,9 +11,37 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from app import create_app
+from app.agent_tools.reception import (
+    confirm_cancellation_proposal,
+    confirm_reschedule_proposal,
+    run_confirm_cancellation_tool,
+    run_confirm_reschedule_tool,
+)
+from app.agent_tools.schemas import (
+    AgentToolCall,
+    ConfirmCancellationArguments,
+    ConfirmRescheduleArguments,
+)
+from app.audit.models import AuditEvent
 from app.catalog.models import Promotion, Service
 from app.clinical.models import Patient
 from app.db import get_db
+from app.errors import AppError, ErrorCode
+from app.iam.context import ExecutionContext
+from app.iam.models import Principal
+from app.iam.permissions import (
+    CONTACT_APPOINTMENTS_CANCEL,
+    CONTACT_APPOINTMENTS_RESCHEDULE,
+)
+from app.iam.service import (
+    add_membership,
+    assign_role,
+    create_principal,
+    create_role,
+    grant_permission,
+)
+from app.idempotency.models import CommandReceipt
+from app.idempotency.service import command_fingerprint
 from app.messaging.models import (
     ChannelAccount,
     ContactIdentity,
@@ -178,6 +206,293 @@ READ_TOOLS = {
     "get_reception_context",
     "get_contact_profile",
 }
+
+
+def _authorized_agent_context(session):
+    principal = create_principal(
+        session, display_name="AGENT-03 test agent", principal_type="agent"
+    )
+    membership = add_membership(
+        session, organization_id=ORG, principal_id=principal.id
+    )
+    role = create_role(
+        session,
+        organization_id=ORG,
+        code=f"agent-cancel-reschedule-{principal.id}",
+        name="Agent cancellation and rescheduling test",
+    )
+    grant_permission(
+        session, role_id=role.id, permission_code=CONTACT_APPOINTMENTS_CANCEL
+    )
+    grant_permission(
+        session, role_id=role.id, permission_code=CONTACT_APPOINTMENTS_RESCHEDULE
+    )
+    assign_role(
+        session,
+        organization_id=ORG,
+        membership_id=membership.id,
+        role_id=role.id,
+    )
+    session.rollback()
+    persisted_type = session.get(Principal, principal.id).type
+    session.rollback()
+    return ExecutionContext(
+        organization_id=ORG,
+        principal_id=principal.id,
+        principal_type=persisted_type,
+        request_id=f"agent-03-{principal.id}",
+        correlation_id=f"agent-03-correlation-{principal.id}",
+    )
+
+
+def _seed_appointment_for_agent_mutation(client, session, *, suffix: str, start_utc):
+    seeded = _seed_reception(
+        session, suffix=suffix, phone=f"+5199913{uuid4().int % 10_000_000:07d}"
+    )
+    profile = _call(
+        client,
+        conversation_id=seeded["conversation"].id,
+        tool_name="register_contact_profile",
+        arguments={"full_name": f"Paciente {suffix}"},
+    ).json()["data"]["profile"]
+    appointment = Appointment(
+        organization_id=ORG,
+        lead_id=profile["lead_id"],
+        patient_id=profile["patient_id"],
+        service_id=seeded["service"].id,
+        practitioner_id=seeded["practitioner"].id,
+        location_id=seeded["location"].id,
+        start_utc=start_utc,
+        end_utc=start_utc + timedelta(hours=1),
+        state="confirmed",
+    )
+    session.add(appointment)
+    session.commit()
+    return seeded, appointment
+
+
+def _mutation_receipt(session, *, ctx, appointment, operation, key, params):
+    start_utc = appointment.start_utc.astimezone(UTC).isoformat()
+    end_utc = appointment.end_utc.astimezone(UTC).isoformat()
+    receipt = CommandReceipt(
+        organization_id=ORG,
+        principal_id=ctx.principal_id,
+        operation=operation,
+        idempotency_key=str(key),
+        request_fingerprint=command_fingerprint(
+            operation=operation, organization_id=ORG, params=params
+        ),
+        request_id=ctx.request_id,
+        correlation_id=ctx.correlation_id,
+        resource_type="appointment",
+        resource_id=str(appointment.id),
+        outcome_json={
+            "status": "applied",
+            "resource_type": "appointment",
+            "resource_id": str(appointment.id),
+            "patient_id": appointment.patient_id,
+            "service_id": appointment.service_id,
+            "practitioner_id": appointment.practitioner_id,
+            "location_id": appointment.location_id,
+            "start_utc": start_utc,
+            "end_utc": end_utc,
+            "state": appointment.state,
+        },
+    )
+    session.add(receipt)
+    session.commit()
+    return receipt
+
+
+@pytest.mark.parametrize("action", ["cancel", "reschedule"])
+@pytest.mark.parametrize("entrypoint", ["direct", "tool"])
+@pytest.mark.parametrize("proposal_status", ["pending", "confirmed"])
+def test_agent_cannot_directly_confirm_reception_appointment_mutations(
+    client, session, action, entrypoint, proposal_status
+):
+    seeded, appointment = _seed_appointment_for_agent_mutation(
+        client,
+        session,
+        suffix=f"agent-direct-{action}",
+        start_utc=datetime(2026, 8, 24, 14, tzinfo=UTC),
+    )
+    ctx = _authorized_agent_context(session)
+    now = datetime.now(UTC)
+    call_arguments = None
+    audit_count = session.scalar(select(func.count()).select_from(AuditEvent))
+    receipt_count = session.scalar(select(func.count()).select_from(CommandReceipt))
+    session.rollback()
+    with pytest.raises(AppError) as raised:
+        if action == "cancel":
+            source = _add_inbound_message(
+                session, seeded, suffix="agent-direct-cancel-source"
+            )
+            confirmation = _add_inbound_message(
+                session, seeded, suffix="agent-direct-cancel-confirmation"
+            )
+            if proposal_status == "confirmed":
+                appointment.state = "cancelled"
+            proposal = AppointmentCancellationProposal(
+                organization_id=ORG,
+                conversation_id=seeded["conversation"].id,
+                contact_identity_id=seeded["contact"].id,
+                appointment_id=appointment.id,
+                source_message_id=source.id,
+                confirmation_token=uuid4(),
+                status=proposal_status,
+                expires_at=now + timedelta(minutes=15),
+            )
+            session.add(proposal)
+            session.commit()
+            before_state = (
+                appointment.state,
+                appointment.start_utc,
+                appointment.end_utc,
+            )
+            call_arguments = ConfirmCancellationArguments(
+                proposal_id=proposal.id,
+                confirmation_token=proposal.confirmation_token,
+                source_message_id=confirmation.id,
+            )
+            command = confirm_cancellation_proposal
+            tool_command = run_confirm_cancellation_tool
+            tool_name = "confirm_cancellation"
+        else:
+            new_start = datetime(2026, 8, 24, 16, tzinfo=UTC)
+            new_end = datetime(2026, 8, 24, 17, tzinfo=UTC)
+            if proposal_status == "confirmed":
+                appointment.start_utc = new_start
+                appointment.end_utc = new_end
+            proposal = AppointmentRescheduleProposal(
+                organization_id=ORG,
+                conversation_id=seeded["conversation"].id,
+                contact_identity_id=seeded["contact"].id,
+                appointment_id=appointment.id,
+                old_start_utc=appointment.start_utc,
+                old_end_utc=appointment.end_utc,
+                new_start_utc=new_start,
+                new_end_utc=new_end,
+                confirmation_token=uuid4(),
+                status=proposal_status,
+                expires_at=now + timedelta(minutes=15),
+            )
+            session.add(proposal)
+            session.commit()
+            before_state = (
+                appointment.state,
+                appointment.start_utc,
+                appointment.end_utc,
+            )
+            call_arguments = ConfirmRescheduleArguments(
+                proposal_id=proposal.id,
+                confirmation_token=proposal.confirmation_token,
+            )
+            command = confirm_reschedule_proposal
+            tool_command = run_confirm_reschedule_tool
+            tool_name = "confirm_reschedule"
+
+        if entrypoint == "direct":
+            command(
+                session,
+                ctx=ctx,
+                conversation_id=seeded["conversation"].id,
+                arguments=call_arguments,
+            )
+        else:
+            call = AgentToolCall(
+                tool_version="1.1",
+                tool_name=tool_name,
+                conversation_id=seeded["conversation"].id,
+                request_id=uuid4(),
+                correlation_id=uuid4(),
+                idempotency_key=uuid4(),
+                arguments=call_arguments.model_dump(mode="json"),
+            )
+            tool_command(session, call=call, arguments=call_arguments, ctx=ctx)
+
+    assert raised.value.code is ErrorCode.INVALID_INPUT
+    assert raised.value.message == (
+        "Automatic appointment confirmation requires verified patient acceptance."
+    )
+    session.expire_all()
+    current = session.get(Appointment, appointment.id)
+    assert (current.state, current.start_utc, current.end_utc) == before_state
+    assert proposal.status == proposal_status
+    assert session.scalar(select(func.count()).select_from(AuditEvent)) == audit_count
+    assert session.scalar(select(func.count()).select_from(CommandReceipt)) == receipt_count
+
+
+@pytest.mark.parametrize("action", ["cancel", "reschedule"])
+def test_agent_cannot_replay_reception_appointment_confirmation_receipt(
+    client, session, action
+):
+    start = (
+        datetime(2026, 8, 24, 14, tzinfo=UTC)
+        if action == "cancel"
+        else datetime(2026, 8, 24, 16, tzinfo=UTC)
+    )
+    seeded, appointment = _seed_appointment_for_agent_mutation(
+        client,
+        session,
+        suffix=f"agent-replay-{action}",
+        start_utc=start,
+    )
+    if action == "cancel":
+        appointment.state = "cancelled"
+        arguments = ConfirmCancellationArguments(
+            proposal_id=1,
+            confirmation_token=uuid4(),
+            source_message_id=1,
+        )
+        operation = "contact_appointments.confirm_cancellation"
+        tool = run_confirm_cancellation_tool
+        tool_name = "confirm_cancellation"
+    else:
+        arguments = ConfirmRescheduleArguments(
+            proposal_id=1,
+            confirmation_token=uuid4(),
+        )
+        operation = "contact_appointments.confirm_reschedule"
+        tool = run_confirm_reschedule_tool
+        tool_name = "confirm_reschedule"
+    session.commit()
+    ctx = _authorized_agent_context(session)
+    key = uuid4()
+    call = AgentToolCall(
+        tool_version="1.1",
+        tool_name=tool_name,
+        conversation_id=seeded["conversation"].id,
+        request_id=uuid4(),
+        correlation_id=uuid4(),
+        idempotency_key=key,
+        arguments=arguments.model_dump(mode="json"),
+    )
+    params = {
+        "conversation_id": call.conversation_id,
+        **arguments.model_dump(mode="json"),
+    }
+    _mutation_receipt(
+        session,
+        ctx=ctx,
+        appointment=appointment,
+        operation=operation,
+        key=key,
+        params=params,
+    )
+    audit_count = session.scalar(select(func.count()).select_from(AuditEvent))
+    receipt_count = session.scalar(select(func.count()).select_from(CommandReceipt))
+    before_state = (appointment.state, appointment.start_utc, appointment.end_utc)
+    session.rollback()
+
+    with pytest.raises(AppError) as raised:
+        tool(session, call=call, arguments=arguments, ctx=ctx)
+
+    assert raised.value.code is ErrorCode.INVALID_INPUT
+    session.expire_all()
+    current = session.get(Appointment, appointment.id)
+    assert (current.state, current.start_utc, current.end_utc) == before_state
+    assert session.scalar(select(func.count()).select_from(AuditEvent)) == audit_count
+    assert session.scalar(select(func.count()).select_from(CommandReceipt)) == receipt_count
 
 
 def _call(

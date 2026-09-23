@@ -1,5 +1,16 @@
 # OdontoFlow Changelog
 
+## AGENT-03 — Agent appointment mutations remain human-controlled (2026-09-22)
+
+- Reused the existing human-confirmation guard for cancellation and rescheduling
+  commands. Agent principals are refused before command transactions, receipt
+  claims, confirmed-proposal shortcuts, and tool-level receipt replay.
+- Preserved the existing human operations, IAM permission checks, tenant-scoped
+  lookups, proposal expiry, audit/receipt transactions, and booking refusal.
+- Added PostgreSQL regressions for direct and tool confirmation of pending and
+  confirmed proposals, and for cancellation/rescheduling receipt replay.
+- No schema, API, scheduling, or OpenAPI change.
+
 ## CORE-02 — Close the ERP_ANONYMOUS_COMPAT gap on protected business routes (2026-09-22)
 
 - The Lead-to-Appointment and Reception/Scheduling business routers

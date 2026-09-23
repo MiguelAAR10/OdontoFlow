@@ -20,7 +20,7 @@ from app.agent_tools.schemas import (
     ReceptionContextArguments,
     RegisterContactProfileArguments,
 )
-from app.agent_tools.guards import require_automation_active
+from app.agent_tools.guards import require_automation_active, require_human_confirmation
 from app.audit.service import record_event
 from app.catalog.models import Service
 from app.clinical.models import Patient
@@ -757,6 +757,7 @@ def confirm_cancellation_proposal(
     arguments: ConfirmCancellationArguments,
     idempotency: IdempotencyClaim | None = None,
 ) -> Appointment:
+    require_human_confirmation(ctx)
     now = datetime.now(UTC)
     with session.begin():
         receipt = claim_receipt(session, ctx, idempotency)
@@ -857,6 +858,7 @@ def run_confirm_cancellation_tool(
     arguments: ConfirmCancellationArguments,
     ctx: ExecutionContext,
 ) -> dict:
+    require_human_confirmation(ctx)
     outcome = run_idempotent_command(
         session,
         operation=confirm_cancellation_proposal,
@@ -1069,6 +1071,7 @@ def confirm_reschedule_proposal(
     arguments: ConfirmRescheduleArguments,
     idempotency: IdempotencyClaim | None = None,
 ) -> Appointment:
+    require_human_confirmation(ctx)
     now = datetime.now(UTC)
     with session.begin():
         receipt = claim_receipt(session, ctx, idempotency)
@@ -1162,6 +1165,7 @@ def run_confirm_reschedule_tool(
     arguments: ConfirmRescheduleArguments,
     ctx: ExecutionContext,
 ) -> dict:
+    require_human_confirmation(ctx)
     outcome = run_idempotent_command(
         session,
         operation=confirm_reschedule_proposal,
