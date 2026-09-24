@@ -1224,7 +1224,11 @@ def request_handoff(
         receipt = claim_receipt(session, ctx, idempotency)
         require_permission(session, ctx, CONVERSATIONS_MANAGE)
         conversation, contact = _load_conversation_contact(
-            session, conversation_id=conversation_id, ctx=ctx, for_update=True
+            session,
+            conversation_id=conversation_id,
+            ctx=ctx,
+            for_update=True,
+            allow_human_handoff=True,
         )
         handoff = session.scalar(
             select(ReceptionHandoff)

@@ -36,6 +36,11 @@ from sales_agent.schemas import (
 
 diagnostic_logger = logging.getLogger("sales_agent.diagnostics")
 
+FAILURE_HANDOFF_REASON_CODE = "other"
+FAILURE_HANDOFF_REASON_SUMMARY = (
+    "Automatic assistance could not complete the conversation and human recovery is required."
+)
+
 
 def _configured_service_credential(request: Request) -> str | None:
     """Return the one server-configured identity allowed to run this process.
@@ -118,7 +123,7 @@ def _elapsed_ms(started_ns: int) -> int:
     return max(0, (perf_counter_ns() - started_ns) // 1_000_000)
 
 
-def _record_failure(request: Request, exc: BaseException, *, elapsed_ms: int) -> None:
+def _record_failure(request: Request, exc: BaseException, *, elapsed_ms: int):
     from sales_agent.runtime import SalesAgentDiagnostic, diagnostic_for_exception
 
     diagnostic = getattr(exc, "diagnostic", None)
@@ -135,6 +140,39 @@ def _record_failure(request: Request, exc: BaseException, *, elapsed_ms: int) ->
         "sales_agent_failure %s",
         json.dumps(payload, sort_keys=True, separators=(",", ":")),
     )
+    return diagnostic
+
+
+# The owner-approved recovery scope: provider timeout, turn timeout, and the
+# unclassified generic runtime exception. Every other diagnostic category
+# (provider auth/rate-limit/request/model errors, gateway, invalid response,
+# unavailable runtime, …) keeps its existing public error but must not create
+# a handoff.
+RECOVERABLE_FAILURE_CATEGORIES = frozenset({"provider_timeout", "turn_timeout", "unknown"})
+
+
+def _attempt_failure_handoff(
+    runtime: Any, payload: SalesAgentTurnRequest
+) -> None:
+    """One bounded, best-effort call to the existing handoff command.
+
+    A failed or unreachable handoff attempt must never replace the caller's
+    original public error, so every exception here is swallowed.
+    """
+    gateway = getattr(runtime, "gateway", None)
+    if gateway is None:
+        return
+    try:
+        gateway.call_tool(
+            "request_human_handoff",
+            conversation_id=payload.conversation_id,
+            arguments={
+                "reason_code": FAILURE_HANDOFF_REASON_CODE,
+                "reason_summary": FAILURE_HANDOFF_REASON_SUMMARY,
+            },
+        )
+    except Exception:
+        return
 
 
 def _error_response(
@@ -238,7 +276,9 @@ def create_app(*, runtime: Any | None = None, settings: AgentSettings | None = N
                 details=_trace_details(request),
             )
         except RuntimeError as exc:
-            _record_failure(request, exc, elapsed_ms=_elapsed_ms(started_ns))
+            diagnostic = _record_failure(request, exc, elapsed_ms=_elapsed_ms(started_ns))
+            if diagnostic.category in RECOVERABLE_FAILURE_CATEGORIES:
+                _attempt_failure_handoff(active_runtime, payload)
             return _error_response(
                 "AGENT_EXECUTION_FAILED",
                 "The Sales Agent could not complete this turn safely.",
