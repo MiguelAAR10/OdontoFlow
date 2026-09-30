@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from app.agent_tools.schemas import AgentToolCall, AgentToolResult
-from app.agent_tools.service import call_agent_tool
+from app.agent_tools.schemas import AgentToolCall, AgentToolCatalog, AgentToolResult
+from app.agent_tools.service import call_agent_tool, list_agent_tools
 from app.context import resolve_http_context
 from app.db import get_db
 
@@ -21,3 +21,10 @@ def call_tool_route(
         ctx=resolve_http_context(request),
     )
 
+
+@router.get("/catalog", response_model=AgentToolCatalog)
+def catalog_route(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> AgentToolCatalog:
+    return list_agent_tools(db, ctx=resolve_http_context(request))

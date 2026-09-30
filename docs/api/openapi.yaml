@@ -139,6 +139,87 @@ paths:
         schema:
           type: string
           format: uuid
+  /agent-tools/catalog:
+    get:
+      tags:
+      - agent-tools
+      summary: Catalog Route
+      operationId: catalog_route_agent_tools_catalog_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentToolCatalog'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+      security:
+      - IntegrationBearer: []
+      parameters:
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
   /services:
     get:
       summary: List Services Route
@@ -7930,8 +8011,10 @@ components:
           - request_human_handoff
           title: Tool Name
         conversation_id:
-          type: integer
-          minimum: 1.0
+          anyOf:
+          - type: integer
+            minimum: 1.0
+          - type: 'null'
           title: Conversation Id
         request_id:
           type: string
@@ -7956,12 +8039,71 @@ components:
       required:
       - tool_version
       - tool_name
-      - conversation_id
       - request_id
       - correlation_id
       - idempotency_key
       - arguments
       title: AgentToolCall
+    AgentToolCatalog:
+      properties:
+        tools:
+          items:
+            $ref: '#/components/schemas/AgentToolDescriptor'
+          type: array
+          title: Tools
+      additionalProperties: false
+      type: object
+      required:
+      - tools
+      title: AgentToolCatalog
+    AgentToolDescriptor:
+      properties:
+        name:
+          type: string
+          title: Name
+        tool_version:
+          type: string
+          enum:
+          - '1.0'
+          - '1.1'
+          title: Tool Version
+        effect:
+          type: string
+          enum:
+          - read
+          - propose
+          - execute
+          title: Effect
+        level:
+          type: string
+          enum:
+          - L0
+          - L1
+          - L2
+          - L3
+          - L4
+          title: Level
+        needs_conversation:
+          type: boolean
+          title: Needs Conversation
+        description:
+          type: string
+          title: Description
+        arguments_schema:
+          additionalProperties: true
+          type: object
+          title: Arguments Schema
+      additionalProperties: false
+      type: object
+      required:
+      - name
+      - tool_version
+      - effect
+      - level
+      - needs_conversation
+      - description
+      - arguments_schema
+      title: AgentToolDescriptor
     AgentToolError:
       properties:
         code:

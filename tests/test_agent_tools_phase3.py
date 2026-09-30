@@ -415,7 +415,8 @@ def test_tool_call_audit_keeps_trace_and_excludes_prompt_content(client, session
 def test_agent_tool_openapi_has_no_business_mutation_routes(client):
     spec = client.get("/openapi.json").json()
     paths = {path for path in spec["paths"] if path.startswith("/agent-tools")}
-    assert paths == {"/agent-tools/call"}
+    # B1: the read-only catalog is the only addition; still no business mutation route.
+    assert paths == {"/agent-tools/call", "/agent-tools/catalog"}
     forbidden = ("/appointments", "/leads", "/products", "/payments")
     assert all(not any(path == prefix for prefix in forbidden) for path in paths)
 

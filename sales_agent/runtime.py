@@ -23,6 +23,7 @@ from sales_agent.config import (
 )
 from sales_agent.schemas import (
     MUTATION_TOOL_NAMES,
+    OUTCOME_UNKNOWN,
     AgentUnavailableError,
     GatewayError,
     InboundMessage,
@@ -417,6 +418,17 @@ def _build_middleware(
             return result
         except SalesAgentTurnTimeout:
             raise
+        except GatewayError as exc:
+            telemetry.tool_failures += 1
+            if exc.code == OUTCOME_UNKNOWN:
+                # The mutation may have committed: never let the model narrate
+                # success. The turn recovers through a human handoff.
+                raise
+            tool_call_id = tool_call.get("id", "unknown") if isinstance(tool_call, dict) else "unknown"
+            return ToolMessage(
+                content="The backend tool failed safely. Request human reception if needed.",
+                tool_call_id=tool_call_id,
+            )
         except Exception:
             telemetry.tool_failures += 1
             tool_call_id = tool_call.get("id", "unknown") if isinstance(tool_call, dict) else "unknown"
@@ -582,8 +594,8 @@ class SalesAgentRuntime:
         conversation_id: int,
         telemetry: _TurnTelemetry,
         reason_summary: str,
-    ) -> None:
-        """Use the typed handoff wrapper when the bounded loop is exhausted."""
+    ) -> bool:
+        """Use the typed handoff wrapper; return whether the backend accepted it."""
         try:
             from sales_agent.tools import build_v0_tools
 
@@ -599,8 +611,11 @@ class SalesAgentRuntime:
             )
             if not isinstance(result, dict) or result.get("status") != "success":
                 telemetry.tool_failures += 1
+                return False
+            return True
         except Exception:
             telemetry.tool_failures += 1
+            return False
 
     def turn(self, request: SalesAgentTurnRequest) -> SalesAgentTurnResponse:
         started_ns = perf_counter_ns()
@@ -693,6 +708,23 @@ class SalesAgentRuntime:
                     outcome="handoff",
                     handoff=True,
                 )
+            if isinstance(exc, GatewayError) and exc.code == OUTCOME_UNKNOWN:
+                # A mutation was sent but its result is unknown. Hand off to a
+                # human who verifies canonical state; if even that fails, the
+                # original error propagates (never a model-authored success).
+                if self._request_handoff(
+                    conversation_id=request.conversation_id,
+                    telemetry=telemetry,
+                    reason_summary="A booking action outcome is unknown; verify it.",
+                ):
+                    outcome = "handoff"
+                    return SalesAgentTurnResponse(
+                        conversation_id=request.conversation_id,
+                        latest_inbound_message_id=request.latest_inbound_message_id,
+                        reply="I’m transferring this conversation to human reception.",
+                        outcome="handoff",
+                        handoff=True,
+                    )
             if _is_timeout_exception(exc):
                 outcome = "provider_timeout"
                 diagnostic = diagnostic_for_exception(

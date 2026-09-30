@@ -926,7 +926,6 @@ def test_handoff_write_failure_preserves_original_503_and_claims_no_recovery(
 ) -> None:
     """A7: an uncommitted handoff cannot be reported as durable recovery."""
 
-    from app.agent_tools import service as agent_tool_service
     from app.audit.service import record_event
     from app.iam.service import require_permission
     from app.idempotency.service import (
@@ -1000,7 +999,15 @@ def test_handoff_write_failure_preserves_original_503_and_claims_no_recovery(
             assert receipt is not None
             raise RuntimeError(f"{EXCEPTION_TEXT_SENTINEL} before commit")
 
-    monkeypatch.setattr(agent_tool_service, "run_handoff_tool", fail_before_commit)
+    # B1: dispatch goes through the registry, so patch the registered handler.
+    from dataclasses import replace
+
+    from app.agent_tools import registry
+
+    spec = registry.TOOL_REGISTRY["request_human_handoff"]
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "request_human_handoff", replace(spec, handler=fail_before_commit)
+    )
     caplog.set_level(logging.WARNING, logger="sales_agent.diagnostics")
     with backend_client:
         sales_client, runtime = _sales_client(

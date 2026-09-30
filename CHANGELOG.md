@@ -1,5 +1,39 @@
 # OdontoFlow Changelog
 
+## B1 — ToolSpec registry, server allowlist, stable idempotency key, catalog (2026-10-01)
+
+- `app/agent_tools/registry.py` is the single source for the 16 agent tools:
+  each `ToolSpec` declares its args model, handler, effect
+  (`read|propose|execute`), level (`L0..L4`), documented permissions,
+  `needs_conversation` and a description. `READ_TOOL_NAMES`,
+  `MUTATION_TOOL_NAMES` and `ARGUMENT_MODELS` are derived from it, and
+  `call_agent_tool` dispatches through the registry (the if/elif is gone).
+- Server-side allowlist per `agent_key` (config in code, no migration):
+  `reception` = the 16 tools minus the L4 `confirm_*` tools. Agent principals
+  never reach an L4 tool, and a tool outside their allowlist gets HTTP 403
+  `PERMISSION_DENIED` plus a `security_events` row (`agent_tool_denied`,
+  `blocked`). The gate runs before trace validation. Human, integration and
+  system principals are still governed by permissions only.
+- `AgentToolCall.conversation_id` is now optional; a tool that needs a
+  conversation returns `INVALID_INPUT` without one. The `agent_tool.called`
+  audit adds `agent_key`, and `entity_id` falls back to `"none"`.
+- New `GET /agent-tools/catalog` (authenticated, read-only). An agent sees its
+  allowlist (never L4); other principals see all 16 tools with their JSON
+  argument schemas.
+- Sales Agent gateway: mutations send a stable UUIDv4-shaped
+  `Idempotency-Key`, derived from sha256 of the conversation, the latest inbound
+  message, the tool and the canonical UTC-normalized args, so a retry replays.
+  The turn's inbound id is the one the gateway loaded at turn start, so tool
+  wrappers and the runtime keep their signatures.
+  A read timeout or a 502/504 without an envelope on a mutation raises
+  `OUTCOME_UNKNOWN` and is not retried. The runtime turns that into a human
+  handoff, or re-raises the error if the handoff fails. It never reports the
+  outcome as `proposed`.
+- `uv.lock`: langgraph 1.2.11 → 1.2.12, langchain 1.4.0 → 1.4.3
+  (langchain-core 1.6.2 → 1.6.6). `pyproject.toml` is unchanged.
+- Regenerated `docs/api/openapi.json`/`openapi.yaml` (1 new route, additive;
+  `conversation_id` becomes optional).
+
 ## B0.5 — Domain gaps: outcomes, reversals, reorder points, waitlist, domain events (2026-10-01)
 
 - Migration `0020_domain_gaps`: `ck_appointments_state` widened to

@@ -115,6 +115,12 @@ class SalesAgentTurnResponse(SalesAgentResponse):
     latest_inbound_message_id: int = Field(ge=1)
 
 
+#: Gateway-only code: a mutation was sent but its backend outcome is unknown
+#: (read timeout, dropped connection, 502/504 without the stable envelope).
+#: The backend never emits it.
+OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
+
+
 class GatewayError(Exception):
     """A safe typed error from the authenticated backend gateway."""
 

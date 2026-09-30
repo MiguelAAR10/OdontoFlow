@@ -841,9 +841,9 @@ def test_sales_agent_v0_cannot_confirm_or_use_dormant_permissions(client, sessio
         },
         auth_headers=agent_headers,
     )
-    assert confirmed.status_code == 200, confirmed.text
-    assert confirmed.json()["status"] == "error", confirmed.text
-    assert confirmed.json()["error"]["code"] == "INVALID_INPUT", confirmed.text
+    # B1: L4 is denied at the server allowlist gate before the handler guard.
+    assert confirmed.status_code == 403, confirmed.text
+    assert confirmed.json()["error"]["code"] == "PERMISSION_DENIED", confirmed.text
     assert session.scalar(select(func.count()).select_from(Appointment)) == 0
     assert session.get(AppointmentProposal, proposal["id"]).status == "pending"
 

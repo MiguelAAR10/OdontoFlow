@@ -26,26 +26,9 @@ ToolName = Literal[
     "request_human_handoff",
 ]
 
-READ_TOOL_NAMES = {
-    "list_services",
-    "list_locations",
-    "list_eligible_practitioners",
-    "query_available_slots",
-    "get_appointment",
-    "list_contact_appointments",
-    "get_reception_context",
-    "get_contact_profile",
-}
-MUTATION_TOOL_NAMES = {
-    "propose_appointment",
-    "confirm_appointment",
-    "register_contact_profile",
-    "propose_cancellation",
-    "confirm_cancellation",
-    "propose_reschedule",
-    "confirm_reschedule",
-    "request_human_handoff",
-}
+# READ_TOOL_NAMES / MUTATION_TOOL_NAMES are derived from the registry
+# (``app.agent_tools.registry``); ``ToolName`` stays a static Literal for the
+# envelope and a registry test fails if the two drift.
 
 
 class EmptyArguments(BaseModel):
@@ -187,7 +170,7 @@ class AgentToolCall(BaseModel):
 
     tool_version: Literal["1.0", "1.1"]
     tool_name: ToolName
-    conversation_id: int = Field(ge=1)
+    conversation_id: int | None = Field(default=None, ge=1)
     request_id: UUID
     correlation_id: UUID
     idempotency_key: UUID | None = Field(...)
@@ -195,6 +178,8 @@ class AgentToolCall(BaseModel):
 
     @model_validator(mode="after")
     def validate_version_and_idempotency(self):
+        from app.agent_tools.registry import READ_TOOL_NAMES
+
         if self.tool_name in READ_TOOL_NAMES:
             if self.tool_version != "1.0" or self.idempotency_key is not None:
                 raise ValueError(
@@ -227,3 +212,21 @@ class AgentToolResult(BaseModel):
     request_id: str
     correlation_id: str
     duration_ms: int = Field(ge=0)
+
+
+class AgentToolDescriptor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    tool_version: Literal["1.0", "1.1"]
+    effect: Literal["read", "propose", "execute"]
+    level: Literal["L0", "L1", "L2", "L3", "L4"]
+    needs_conversation: bool
+    description: str
+    arguments_schema: dict[str, Any]
+
+
+class AgentToolCatalog(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tools: list[AgentToolDescriptor]
