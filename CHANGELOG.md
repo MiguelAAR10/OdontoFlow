@@ -1,5 +1,28 @@
 # OdontoFlow Changelog
 
+## MCPCLI — Agentic doors: `odontoflow` CLI + MCP server over the catalog (2026-10-01)
+
+- New HTTP-only packages (no `app`/SQLAlchemy/psycopg import; a test enforces
+  it): `odontoflow_cli/` (`OdontoflowApi` shared client + argparse CLI:
+  `tools list`, `call`, `inbox`, `approve`, `decline`, `runs start cobranza`,
+  `me`; `--json`; exit codes 0/1/2/3) and `odontoflow_mcp/` (`build_server`,
+  official `mcp` SDK 2.2). Config via `ODONTOFLOW_TOKEN` / `ODONTOFLOW_URL`.
+- The MCP server lists `GET /agent-tools/catalog` for the process token (minus
+  L4) as proxy tools to `POST /agent-tools/call`, plus `odontoflow_inbox`,
+  `odontoflow_start_cobranza_run` and `odontoflow_me`. It never exposes
+  approve/decline and refuses a human token at startup (`HUMAN_TOKEN_REFUSED`).
+  Mutation keys are stable per (conversation, tool, args), so a retry replays.
+  stdio is the default; streamable-http is opt-in, loopback only, untested.
+- The only client-side policies are the L4 display filter and no MCP approval.
+  Everything else stays server-side (an agent `call confirm_appointment` still
+  gets the server's 403).
+- `pyproject.toml`: extra `mcp` (`httpx`, `mcp>=2.2,<3`), `mcp` in the dev
+  group, console scripts `odontoflow` and `odontoflow-mcp`; `uv.lock` updated.
+  No route, table, permission or migration change (OpenAPI unchanged).
+- Known debt, documented in `docs/agents/mcp-cli.md`: `airy-cobranza` falls
+  back to the reception allowlist (B4), so its catalog lists 13 tools that all
+  return 403 for it.
+
 ## COB — Collections agent: deterministic sweep, "run now", reminder proposals (2026-10-01)
 
 - Migration `0022_agent_runs` (head `0022`): table `agent_runs` (closed
