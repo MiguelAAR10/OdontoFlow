@@ -3778,6 +3778,87 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+  /me:
+    get:
+      tags:
+      - identity
+      summary: Read Me
+      operationId: read_me_me_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeRead'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+      security:
+      - IntegrationBearer: []
+      parameters:
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
   /products/{product_id}/entries:
     post:
       summary: Register Entry Route
@@ -9117,6 +9198,72 @@ components:
       title: LowStockRead
       description: One product × location whose derived balance is below its reorder
         point.
+    MeOrganization:
+      properties:
+        id:
+          type: integer
+          title: Id
+        name:
+          type: string
+          title: Name
+      type: object
+      required:
+      - id
+      - name
+      title: MeOrganization
+    MePrincipal:
+      properties:
+        id:
+          type: integer
+          title: Id
+        type:
+          type: string
+          title: Type
+        display_name:
+          type: string
+          title: Display Name
+      type: object
+      required:
+      - id
+      - type
+      - display_name
+      title: MePrincipal
+    MeRead:
+      properties:
+        principal:
+          $ref: '#/components/schemas/MePrincipal'
+        organization:
+          $ref: '#/components/schemas/MeOrganization'
+        roles:
+          items:
+            $ref: '#/components/schemas/MeRole'
+          type: array
+          title: Roles
+        permissions:
+          items:
+            type: string
+          type: array
+          title: Permissions
+      type: object
+      required:
+      - principal
+      - organization
+      - roles
+      - permissions
+      title: MeRead
+    MeRole:
+      properties:
+        code:
+          type: string
+          title: Code
+        name:
+          type: string
+          title: Name
+      type: object
+      required:
+      - code
+      - name
+      title: MeRole
     MediaReference:
       properties:
         provider_media_id:

@@ -1,5 +1,33 @@
 # OdontoFlow Changelog
 
+## IDN — Human identity per person, secretaria/administrador, GET /me (2026-10-01)
+
+- `scripts/issue_credential.py`: `--type human` is now issuable, only with the
+  new human profiles `secretaria` and `administrador` (`HUMAN_PROFILE_PERMISSIONS`,
+  explicit tuples, no new codes, head stays `0020`). A mismatched type/profile
+  (human + integration profile, integration/agent + human profile) or `system`
+  exits 2, so an agent never holds `payments.reverse`. Human roles are
+  `staff-secretaria` / `staff-administrador`; integration roles keep
+  `integration-<profile>`. A human principal is never reused across
+  organizations by name (one person per clinic).
+- `secretaria`: agenda, patients, visits, the till (charges, payments incl.
+  `payments.manage`, follow-ups), waitlist, `conversations.read` and
+  `contact_appointments.book` (approve appointment proposals).
+  `administrador` adds products, movements (entries/transfers),
+  `reorder_points.manage` and `payments.reverse`.
+- New `GET /me` (authenticated, read-only): principal `{id, type, display_name}`,
+  organization, `roles [{code, name}]` of the credential's organization only
+  (active membership), and sorted `permissions`. It counts against the read
+  rate limit; the BFF should cache it per session.
+- `seed_demo.py --issue-staff-credential` also issues Lucía Ramos (secretaria)
+  and Carlos Vega (administrador) in the same transaction and writes
+  `BACKEND_DEMO_HUMANS` (JSON `[{role, display_name, token}]`) as line 2 of
+  `.env.demo.local` (0600). All credentials commit once before the single file
+  write. `reception-staff-demo` is unchanged.
+- Human mutations keep an optional `Idempotency-Key`; the BFF must keep sending
+  it so retries replay.
+- Regenerated `docs/api/openapi.json`/`openapi.yaml` (1 new route, additive).
+
 ## B1 — ToolSpec registry, server allowlist, stable idempotency key, catalog (2026-10-01)
 
 - `app/agent_tools/registry.py` is the single source for the 16 agent tools:

@@ -4,6 +4,7 @@ Authentication is worthless without a way to hand out and take back keys, so
 this is part of the same change rather than a follow-up.
 
     python scripts/issue_credential.py issue --name n8n-inbound --profile n8n-inbound
+    python scripts/issue_credential.py issue --type human --profile secretaria --name "Lucía Ramos"
     python scripts/issue_credential.py list
     python scripts/issue_credential.py revoke --id 3
 
@@ -79,6 +80,7 @@ from app.iam.permissions import (  # noqa: E402
     PAYMENTS_CREATE,
     PAYMENTS_MANAGE,
     PAYMENTS_READ,
+    PAYMENTS_REVERSE,
     PRACTITIONERS_READ,
     PRODUCTS_CREATE,
     PRODUCTS_READ,
@@ -92,7 +94,7 @@ from app.iam.permissions import (  # noqa: E402
 from app.tenancy import BOOTSTRAP_ORGANIZATION_ID  # noqa: E402
 
 UTC = timezone.utc
-ISSUABLE_TYPES = ("integration", "agent")
+ISSUABLE_TYPES = ("integration", "agent", "human")
 PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "connectivity": (SERVICES_READ,),
     "n8n-inbound": (MESSAGES_CREATE,),
@@ -167,6 +169,81 @@ PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
 }
 
 
+#: IDN — one principal per clinic staff person, with their own credential. An
+#: explicit tuple on purpose: it is never derived from ``reception-staff-demo``,
+#: so changing the integration profile cannot silently change a human role.
+#: B2 extends these tuples (e.g. ``proposals.read``/``proposals.decide``);
+#: re-running the seed or this CLI reconciles the existing ``staff-*`` roles.
+_SECRETARIA: tuple[str, ...] = (
+    PATIENTS_READ,
+    PATIENTS_CREATE,
+    APPOINTMENTS_READ,
+    APPOINTMENTS_CREATE,
+    APPOINTMENTS_CANCEL,
+    APPOINTMENTS_RESCHEDULE,
+    APPOINTMENTS_RECORD_OUTCOME,
+    VISITS_READ,
+    VISITS_CREATE,
+    EXECUTIONS_READ,
+    EXECUTIONS_CREATE,
+    LEADS_READ,
+    LEADS_CREATE,
+    LOCATIONS_READ,
+    SERVICES_READ,
+    PRACTITIONERS_READ,
+    AVAILABILITY_READ,
+    CHARGES_READ,
+    CHARGES_CREATE,
+    PAYMENTS_READ,
+    PAYMENTS_CREATE,
+    PAYMENTS_MANAGE,
+    FOLLOW_UPS_READ,
+    FOLLOW_UPS_CREATE,
+    FOLLOW_UPS_MANAGE,
+    WAITLIST_READ,
+    WAITLIST_MANAGE,
+    # Chat reads and approving appointment proposals (human-only confirm).
+    CONVERSATIONS_READ,
+    CONTACT_APPOINTMENTS_BOOK,
+)
+HUMAN_PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
+    "secretaria": _SECRETARIA,
+    # Inventory (entries = purchases, transfers), reorder points and the
+    # human-only (L4) payment reversal on top of everything secretaria holds.
+    "administrador": _SECRETARIA
+    + (
+        PRODUCTS_READ,
+        PRODUCTS_CREATE,
+        MOVEMENTS_READ,
+        MOVEMENTS_CREATE,
+        REORDER_POINTS_MANAGE,
+        PAYMENTS_REVERSE,
+    ),
+}
+_HUMAN_ROLE_NAMES = {"secretaria": "Secretaria", "administrador": "Administrador"}
+
+
+def profile_role(profile: str) -> tuple[str, str, tuple[str, ...]]:
+    """``(role_code, role_name, permission_codes)`` for a profile, type-aware.
+
+    Human roles are prefixed ``staff-`` (like ``integration-``) so reconciling
+    a profile never rewrites a tenant-created role that happens to be called
+    ``secretaria``.
+    """
+    if profile in HUMAN_PROFILE_PERMISSIONS:
+        return (
+            f"staff-{profile}",
+            _HUMAN_ROLE_NAMES[profile],
+            HUMAN_PROFILE_PERMISSIONS[profile],
+        )
+    return f"integration-{profile}", f"Integration: {profile}", PROFILE_PERMISSIONS[profile]
+
+
+def profile_matches_type(profile: str, principal_type: str) -> bool:
+    """A human profile only for ``human``; an integration profile never for ``human``."""
+    return (profile in HUMAN_PROFILE_PERMISSIONS) == (principal_type == "human")
+
+
 def _resolve_principal(
     session: Session, *, organization_id: int, name: str, principal_type: str
 ) -> Principal:
@@ -188,11 +265,16 @@ def _resolve_principal(
     if principal is not None:
         return principal
 
-    principal = session.scalar(
-        select(Principal).where(
-            Principal.display_name == name, Principal.type == principal_type
+    # A human is a person: the same name in another clinic is someone else, so
+    # it is never reused across organizations (each tenant's audit names its
+    # own person). Integrations/agents keep the global reuse.
+    principal = None
+    if principal_type != "human":
+        principal = session.scalar(
+            select(Principal).where(
+                Principal.display_name == name, Principal.type == principal_type
+            )
         )
-    )
     if principal is None:
         principal = Principal(type=principal_type, display_name=name)
         session.add(principal)
@@ -220,7 +302,7 @@ def _assign_profile(
     profile: str,
 ) -> None:
     """Assign one organization-wide role whose permissions exactly match a profile."""
-    permission_codes = PROFILE_PERMISSIONS[profile]
+    role_code, role_name, permission_codes = profile_role(profile)
     permissions = session.scalars(
         select(Permission).where(Permission.code.in_(permission_codes))
     ).all()
@@ -232,7 +314,6 @@ def _assign_profile(
             f"missing permissions: {', '.join(sorted(missing))}."
         )
 
-    role_code = f"integration-{profile}"
     role = session.scalar(
         select(Role).where(
             Role.organization_id == organization_id,
@@ -243,7 +324,7 @@ def _assign_profile(
         role = Role(
             organization_id=organization_id,
             code=role_code,
-            name=f"Integration: {profile}",
+            name=role_name,
         )
         session.add(role)
         session.flush()
@@ -302,6 +383,12 @@ def cmd_issue(args: argparse.Namespace) -> int:
         return 2
     if args.type not in PRINCIPAL_TYPES:
         print(f"unknown principal type: {args.type}")
+        return 2
+    if not profile_matches_type(args.profile, args.type):
+        print(
+            f"--profile {args.profile} does not match --type {args.type}: human profiles "
+            f"{tuple(HUMAN_PROFILE_PERMISSIONS)} are for 'human' only."
+        )
         return 2
 
     expires_at = (
@@ -397,7 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
     issue.add_argument(
         "--profile",
         required=True,
-        choices=tuple(PROFILE_PERMISSIONS),
+        choices=tuple(PROFILE_PERMISSIONS) + tuple(HUMAN_PROFILE_PERMISSIONS),
         help="Perfil de permisos mínimos para esta responsabilidad.",
     )
     issue.add_argument("--expires-days", type=int, default=None, help="Caducidad en días.")

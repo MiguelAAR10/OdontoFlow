@@ -36,6 +36,7 @@ the appointment→patient link are the only direct ORM writes.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import random
 import sys
@@ -101,6 +102,9 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 STAFF_PROFILE = "reception-staff-demo"
 STAFF_PRINCIPAL_NAME = "reception-staff-demo"
 ENV_TOKEN_NAME = "BACKEND_DEMO_TOKEN"
+ENV_HUMANS_NAME = "BACKEND_DEMO_HUMANS"
+#: IDN: one human principal per demo staff person, ``(display_name, profile)``.
+DEMO_HUMANS = (("Lucía Ramos", "secretaria"), ("Carlos Vega", "administrador"))
 DEFAULT_ENV_FILE = REPO_ROOT / ".env.demo.local"
 
 LINCE = "ODONTO SMART Lince"
@@ -654,44 +658,76 @@ def seed_demo(
     return _summary(session, organization_id, anchor)
 
 
+def _mint(session: Session, *, organization_id: int, name: str, principal_type: str, profile: str) -> str:
+    """Resolve the principal, reconcile its profile role and issue a token. No commit."""
+    principal = _resolve_principal(
+        session, organization_id=organization_id, name=name, principal_type=principal_type
+    )
+    _assign_profile(
+        session, organization_id=organization_id, principal_id=principal.id, profile=profile
+    )
+    _credential, token = issue_credential(
+        session, organization_id=organization_id, principal_id=principal.id, name=name
+    )
+    return token
+
+
 def issue_staff_credential(
     session: Session,
     *,
     organization_id: int = BOOTSTRAP_ORGANIZATION_ID,
     env_path: Path = DEFAULT_ENV_FILE,
+    include_humans: bool = False,
 ) -> Path:
     """Mint a ``reception-staff-demo`` credential and write it to ``env_path``.
 
-    The token is never printed: it goes only into a 0600 file that
+    With ``include_humans`` (IDN) it also mints one human credential per
+    :data:`DEMO_HUMANS` entry, written as a second line ``BACKEND_DEMO_HUMANS``
+    (compact JSON). Every credential is minted in one transaction and committed
+    once, before the file is written once: a failure rolls everything back and
+    leaves the file untouched, so no live token is orphaned.
+
+    The tokens are never printed: they go only into a 0600 file that
     ``.gitignore`` already covers (``.env*.local``).
     """
     _idle(session)
-    principal = _resolve_principal(
-        session,
-        organization_id=organization_id,
-        name=STAFF_PRINCIPAL_NAME,
-        principal_type="integration",
-    )
-    _assign_profile(
-        session,
-        organization_id=organization_id,
-        principal_id=principal.id,
-        profile=STAFF_PROFILE,
-    )
-    _credential, token = issue_credential(
-        session,
-        organization_id=organization_id,
-        principal_id=principal.id,
-        name=STAFF_PRINCIPAL_NAME,
-    )
-    session.commit()
+    try:
+        token = _mint(
+            session,
+            organization_id=organization_id,
+            name=STAFF_PRINCIPAL_NAME,
+            principal_type="integration",
+            profile=STAFF_PROFILE,
+        )
+        humans = [
+            {
+                "role": profile,
+                "display_name": name,
+                "token": _mint(
+                    session,
+                    organization_id=organization_id,
+                    name=name,
+                    principal_type="human",
+                    profile=profile,
+                ),
+            }
+            for name, profile in (DEMO_HUMANS if include_humans else ())
+        ]
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
+    lines = [f"{ENV_TOKEN_NAME}={token}\n"]
+    if include_humans:
+        lines.append(f"{ENV_HUMANS_NAME}={json.dumps(humans, separators=(',', ':'))}\n")
     env_path = Path(env_path)
     descriptor = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(f"{ENV_TOKEN_NAME}={token}\n")
+        handle.writelines(lines)
     os.chmod(env_path, 0o600)
-    print(f"{ENV_TOKEN_NAME} escrito en {env_path.name}")
+    names = ENV_TOKEN_NAME + (f" y {ENV_HUMANS_NAME}" if include_humans else "")
+    print(f"{names} escrito en {env_path.name}")
     return env_path
 
 
@@ -713,7 +749,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--issue-staff-credential",
         action="store_true",
-        help=f"Emite una credencial {STAFF_PROFILE} y la escribe en .env.demo.local.",
+        help=(
+            f"Emite una credencial {STAFF_PROFILE} y las de Lucía Ramos (secretaria) y "
+            "Carlos Vega (administrador), y las escribe en .env.demo.local."
+        ),
     )
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
     return parser
@@ -737,7 +776,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             if args.issue_staff_credential:
                 issue_staff_credential(
-                    session, organization_id=args.organization, env_path=args.env_file
+                    session,
+                    organization_id=args.organization,
+                    env_path=args.env_file,
+                    include_humans=True,
                 )
     finally:
         engine.dispose()

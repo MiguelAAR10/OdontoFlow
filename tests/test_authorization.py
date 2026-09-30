@@ -983,3 +983,16 @@ def test_the_execution_context_is_frozen_and_carries_no_authority():
         "request_id",
         "correlation_id",
     }
+
+
+def test_credential_profiles_use_only_catalog_codes_and_keep_reversal_human_only():
+    """IDN: human profiles are closed-catalog codes; ``payments.reverse`` (L4) is
+    never granted to an agent/integration profile, and the two sets never overlap."""
+    from scripts.issue_credential import HUMAN_PROFILE_PERMISSIONS, PROFILE_PERMISSIONS
+
+    catalog = set(PERMISSION_CODES)
+    for codes in HUMAN_PROFILE_PERMISSIONS.values():
+        assert set(codes) <= catalog
+    for codes in PROFILE_PERMISSIONS.values():
+        assert "payments.reverse" not in codes
+    assert not set(HUMAN_PROFILE_PERMISSIONS) & set(PROFILE_PERMISSIONS)

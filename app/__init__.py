@@ -9,6 +9,7 @@ from app.clinical.router import router as clinical_router
 from app.commercial.router import router as commercial_router
 from app.economics.router import router as economics_router
 from app.errors import register_error_handlers
+from app.iam.router import router as iam_router
 from app.inventory.router import router as inventory_router
 from app.http_security import SecurityBoundaryMiddleware, install_security_openapi
 from app.messaging.router import router as messaging_router
@@ -70,6 +71,7 @@ def create_app() -> FastAPI:
     # and inventory (entries, adjustments, transfers, kardex, balance) are on
     # the same authenticated boundary. No business router is left on the
     # anonymous compatibility path; only ``/health`` is public.
+    # IDN: ``GET /me`` (iam_router) is on the same boundary.
     authenticated = [Depends(require_authenticated_context)]
     for business_router in (
         agent_tools_router,
@@ -77,6 +79,7 @@ def create_app() -> FastAPI:
         clinical_router,
         commercial_router,
         economics_router,
+        iam_router,
         inventory_router,
         messaging_router,
         organization_router,
