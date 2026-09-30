@@ -71,6 +71,12 @@ class AppointmentCancel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AppointmentOutcome(BaseModel):
+    """Empty by design (B0.5 complete / no-show): the outcome is the route."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AppointmentReschedule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -14,6 +14,7 @@ from app.http_security import SecurityBoundaryMiddleware, install_security_opena
 from app.messaging.router import router as messaging_router
 from app.organization.router import router as organization_router
 from app.scheduling.router import router as scheduling_router
+from app.scheduling.waitlist import router as waitlist_router
 
 
 def create_app() -> FastAPI:
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
         messaging_router,
         organization_router,
         scheduling_router,
+        waitlist_router,
     ):
         app.include_router(business_router, dependencies=authenticated)
 

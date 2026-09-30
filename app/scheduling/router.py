@@ -55,6 +55,7 @@ from app.scheduling.schemas import (
     AppointmentCancel,
     AppointmentCreate,
     AppointmentListItem,
+    AppointmentOutcome,
     AppointmentProposalConfirm,
     AppointmentProposalDecline,
     AppointmentProposalRead,
@@ -68,10 +69,14 @@ from app.scheduling.schemas import (
     SlotResult,
 )
 from app.scheduling.service import (
+    OP_APPOINTMENTS_COMPLETE,
+    OP_APPOINTMENTS_NO_SHOW,
     book_appointment,
     cancel_appointment,
+    complete_appointment,
     get_appointment,
     list_appointments,
+    mark_no_show,
     reschedule_appointment,
 )
 
@@ -315,6 +320,69 @@ def cancel_appointment_route(
         response.headers[REPLAY_HEADER] = "true"
         return _appointment_read_from_outcome(outcome.outcome)
     return outcome.result
+
+
+def _record_outcome_route(
+    request: Request,
+    response: Response,
+    db: Session,
+    *,
+    appointment_id: int,
+    operation: Callable,
+    operation_name: str,
+) -> AppointmentRead:
+    ctx = resolve_http_context(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=operation,
+        operation_name=operation_name,
+        key=_idempotency_key(request),
+        ctx=ctx,
+        params={"appointment_id": appointment_id},
+        appointment_id=appointment_id,
+    )
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+        return _appointment_read_from_outcome(outcome.outcome)
+    return outcome.result
+
+
+@router.post("/appointments/{appointment_id}/complete", response_model=AppointmentRead, status_code=200)
+def complete_appointment_route(
+    appointment_id: int,
+    request: Request,
+    response: Response,
+    payload: AppointmentOutcome | None = None,
+    db: Session = Depends(get_db),
+) -> AppointmentRead:
+    """B0.5: confirmed → completed, only once the appointment has started."""
+    return _record_outcome_route(
+        request,
+        response,
+        db,
+        appointment_id=appointment_id,
+        operation=complete_appointment,
+        operation_name=OP_APPOINTMENTS_COMPLETE,
+    )
+
+
+@router.post("/appointments/{appointment_id}/no-show", response_model=AppointmentRead, status_code=200)
+def mark_no_show_route(
+    appointment_id: int,
+    request: Request,
+    response: Response,
+    payload: AppointmentOutcome | None = None,
+    db: Session = Depends(get_db),
+) -> AppointmentRead:
+    """B0.5: confirmed → no_show, only once the appointment has started."""
+    return _record_outcome_route(
+        request,
+        response,
+        db,
+        appointment_id=appointment_id,
+        operation=mark_no_show,
+        operation_name=OP_APPOINTMENTS_NO_SHOW,
+    )
 
 
 # --- Appointment proposals: human review of AIRY's persisted proposals -----

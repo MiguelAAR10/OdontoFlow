@@ -17,7 +17,7 @@ from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -25,18 +25,28 @@ from app.audit.service import record_event
 from app.catalog.models import Service
 from app.clinical.models import Patient, ServiceExecution, Visit
 from app.context import default_context
-from app.economics.models import Charge, ChargeFollowUp, Payment, Product, ServiceConsumption
+from app.economics.models import (
+    Charge,
+    ChargeFollowUp,
+    Payment,
+    PaymentReversal,
+    Product,
+    ServiceConsumption,
+)
 from app.economics.schemas import (
     ChargeCreate,
     ChargeFollowUpClose,
     ChargeFollowUpCreate,
     ChargeFollowUpReschedule,
     PaymentCreate,
+    PaymentReverse,
     PaymentVerify,
     ProductCreate,
     ServiceConsumptionCreate,
 )
 from app.errors import AppError, ErrorCode
+from app.events.service import record_domain_event
+from app.events.types import PAYMENT_RECORDED, PAYMENT_REVERSED
 from app.iam.context import ExecutionContext
 from app.iam.permissions import (
     CHARGES_CREATE,
@@ -46,6 +56,7 @@ from app.iam.permissions import (
     PAYMENTS_CREATE,
     PAYMENTS_MANAGE,
     PAYMENTS_READ,
+    PAYMENTS_REVERSE,
     FOLLOW_UPS_CREATE,
     FOLLOW_UPS_MANAGE,
     FOLLOW_UPS_READ,
@@ -55,7 +66,7 @@ from app.iam.permissions import (
 from app.iam.service import require_permission
 from app.idempotency.service import IdempotencyClaim, claim_receipt, settle_receipt
 from app.inventory.models import InventoryMovement, SALIDA
-from app.inventory.service import require_stock
+from app.inventory.service import available_balance, emit_below_reorder_if_crossed, require_stock
 from app.organization.models import Location, Practitioner
 from app.tenancy import scoped
 
@@ -64,6 +75,7 @@ OP_CONSUMPTIONS_CREATE = "consumptions.create"
 OP_CHARGES_CREATE = "charges.create"
 OP_PAYMENTS_CREATE = "payments.create"
 OP_PAYMENTS_VERIFY = "payments.verify"
+OP_PAYMENTS_REVERSE = "payments.reverse"
 OP_FOLLOW_UPS_CREATE = "follow_ups.create"
 OP_FOLLOW_UPS_RESCHEDULE = "follow_ups.reschedule"
 OP_FOLLOW_UPS_CLOSE = "follow_ups.close"
@@ -77,6 +89,7 @@ CONSUMPTION_CREATED_ACTION = "service_consumption.created"
 CHARGE_CREATED_ACTION = "charge.created"
 PAYMENT_CREATED_ACTION = "payment.created"
 PAYMENT_VERIFIED_ACTION = "payment.verified"
+PAYMENT_REVERSED_ACTION = "payment.reversed"
 FOLLOW_UP_OPENED_ACTION = "charge_follow_up.opened"
 FOLLOW_UP_RESCHEDULED_ACTION = "charge_follow_up.rescheduled"
 FOLLOW_UP_CLOSED_ACTION = "charge_follow_up.closed"
@@ -141,11 +154,35 @@ def _load_charge(session: Session, charge_id: int, organization_id: int) -> Char
     return charge
 
 
+def _payment_not_reversed():
+    """B0.5: a payment counts as paid only while it has no reversal row."""
+    return ~exists().where(
+        PaymentReversal.organization_id == Payment.organization_id,
+        PaymentReversal.payment_id == Payment.id,
+    )
+
+
+def _net_paid_expr():
+    """Correlated ``Σ payments − Σ reversed payments`` for the enclosing Charge."""
+    return (
+        select(func.coalesce(func.sum(Payment.amount), 0))
+        .where(
+            Payment.organization_id == Charge.organization_id,
+            Payment.charge_id == Charge.id,
+            _payment_not_reversed(),
+        )
+        .correlate(Charge)
+        .scalar_subquery()
+    )
+
+
 def charge_paid_amount(session: Session, charge_id: int, organization_id: int) -> Decimal:
+    """Net paid amount: payments that have not been reversed (B0.5)."""
     total = session.scalar(
         select(func.coalesce(func.sum(Payment.amount), 0)).where(
             Payment.organization_id == organization_id,
             Payment.charge_id == charge_id,
+            _payment_not_reversed(),
         )
     )
     return Decimal(total or 0)
@@ -169,15 +206,7 @@ def _charge_projection_rows(
     created_to: date | None = None,
 ) -> list[Charge]:
     """Load charges with the bounded clinical context required by BE-1."""
-    paid_expr = (
-        select(func.coalesce(func.sum(Payment.amount), 0))
-        .where(
-            Payment.organization_id == Charge.organization_id,
-            Payment.charge_id == Charge.id,
-        )
-        .correlate(Charge)
-        .scalar_subquery()
-    )
+    paid_expr = _net_paid_expr()
     statement = (
         select(Charge, ServiceExecution, Visit, Patient, Service, Location, Practitioner, paid_expr)
         .join(
@@ -432,6 +461,7 @@ def create_service_consumption(
         require_stock(
             session, data.product_id, org_id, data.quantity, stock_location_id
         )
+        balance_before = available_balance(session, data.product_id, org_id, stock_location_id)
 
         consumption = ServiceConsumption(
             organization_id=org_id,
@@ -452,18 +482,26 @@ def create_service_consumption(
                     "The product is already consumed in this execution.",
                 ) from exc
             raise
-        session.add(
-            InventoryMovement(
-                organization_id=org_id,
-                product_id=data.product_id,
-                location_id=stock_location_id,
-                type=SALIDA,
-                quantity=data.quantity,
-                unit_price=data.unit_price,
-                id_consumo_origen=consumption.id,
-            )
+        movement = InventoryMovement(
+            organization_id=org_id,
+            product_id=data.product_id,
+            location_id=stock_location_id,
+            type=SALIDA,
+            quantity=data.quantity,
+            unit_price=data.unit_price,
+            id_consumo_origen=consumption.id,
         )
+        session.add(movement)
         session.flush()
+        emit_below_reorder_if_crossed(
+            session,
+            resolved,
+            product_id=data.product_id,
+            location_id=stock_location_id,
+            balance_before=balance_before,
+            balance_after=balance_before - data.quantity,
+            movement_id=movement.id,
+        )
 
         record_event(
             session,
@@ -749,6 +787,7 @@ def _payment_outcome(payment: Payment) -> dict:
         "reconciliation_note": payment.reconciliation_note,
         "verification_status": payment.verification_status,
         "verified_at": payment.verified_at.isoformat() if payment.verified_at else None,
+        "reversed_at": payment.reversed_at.isoformat() if payment.reversed_at else None,
     }
 
 
@@ -852,6 +891,21 @@ def create_payment(
             },
         )
 
+        record_domain_event(
+            session,
+            ctx=resolved,
+            event_type=PAYMENT_RECORDED,
+            aggregate_type=PAYMENT_ENTITY_TYPE,
+            aggregate_id=str(payment.id),
+            payload={
+                "payment_id": payment.id,
+                "charge_id": charge.id,
+                "amount": str(payment.amount),
+                "method": payment.method,
+                "charge_outstanding": str(charge.amount - paid - payment.amount),
+            },
+        )
+
         if paid + payment.amount == charge.amount:
             _settle_open_follow_up(session, charge, resolved)
 
@@ -877,13 +931,14 @@ def list_payments(
     if ctx is not None:
         require_permission(session, resolved, PAYMENTS_READ)
     _load_charge(session, charge_id, org_id)
-    return list(
+    payments = list(
         session.scalars(
             select(Payment)
             .where(Payment.organization_id == org_id, Payment.charge_id == charge_id)
             .order_by(Payment.id)
         )
     )
+    return payments
 
 
 def list_all_payments(
@@ -982,6 +1037,123 @@ def verify_payment(
     return payment
 
 
+UNIQUE_REVERSAL_CONSTRAINT = "uq_payment_reversals_org_payment"
+
+
+def _is_duplicate_reversal(exc: IntegrityError) -> bool:
+    diag = getattr(getattr(exc, "orig", None), "diag", None)
+    return diag is not None and getattr(diag, "constraint_name", None) == UNIQUE_REVERSAL_CONSTRAINT
+
+
+def _require_human_principal(ctx: ExecutionContext) -> None:
+    """Allow-list, not a deny-list on ``== "agent"`` (same rule as ``_require_human_reviewer``)."""
+    if ctx.principal_type != "human":
+        raise AppError(
+            ErrorCode.INVALID_INPUT,
+            "Only an authenticated human principal may reverse a payment.",
+        )
+
+
+def reverse_payment(
+    session: Session,
+    payment_id: int,
+    data: PaymentReverse,
+    *,
+    ctx: ExecutionContext | None = None,
+    organization_id: int | None = None,
+    idempotency: IdempotencyClaim | None = None,
+) -> Payment:
+    """Reverse one payment in full by recording a ``payment_reversals`` row (B0.5).
+
+    L4 (plan §2 principle 5): only a ``human`` principal may reverse; agent,
+    integration and system principals are refused before any transaction,
+    receipt or read. The charge row is locked ``FOR
+    UPDATE`` so a reversal serializes with ``create_payment`` on the same
+    charge; ``UNIQUE(organization_id, payment_id)`` is the final authority
+    against a concurrent second reversal. ``payments`` is never edited: the
+    charge's paid amount simply stops counting this payment.
+    """
+    resolved = _resolved_context(ctx, organization_id)
+    _require_human_principal(resolved)
+    org_id = resolved.organization_id
+
+    try:
+        with session.begin():
+            receipt = claim_receipt(session, resolved, idempotency)
+            if ctx is not None:
+                require_permission(session, resolved, PAYMENTS_REVERSE)
+            payment = session.scalar(
+                scoped(select(Payment).where(Payment.id == payment_id), Payment, org_id)
+            )
+            if payment is None:
+                raise AppError(ErrorCode.NOT_FOUND, "Payment not found.")
+            charge = session.scalar(
+                scoped(select(Charge).where(Charge.id == payment.charge_id), Charge, org_id)
+                .with_for_update()
+            )
+            already = session.scalar(
+                select(PaymentReversal.id).where(
+                    PaymentReversal.organization_id == org_id,
+                    PaymentReversal.payment_id == payment.id,
+                )
+            )
+            if already is not None:
+                raise AppError(ErrorCode.INVALID_INPUT, "The payment is already reversed.")
+
+            reversal = PaymentReversal(
+                organization_id=org_id,
+                payment_id=payment.id,
+                reason=data.reason,
+                created_by_principal_id=resolved.principal_id,
+            )
+            session.add(reversal)
+            session.flush()
+            session.refresh(payment, ["reversed_at"])
+            outstanding = charge.amount - charge_paid_amount(session, charge.id, org_id)
+
+            record_event(
+                session,
+                ctx=resolved,
+                entity_type=PAYMENT_ENTITY_TYPE,
+                entity_id=str(payment.id),
+                action=PAYMENT_REVERSED_ACTION,
+                before_state={"id": payment.id, "charge_id": charge.id, "reversed": False},
+                after_state={
+                    "id": payment.id,
+                    "charge_id": charge.id,
+                    "reversed": True,
+                    "reversal_id": reversal.id,
+                    "amount": str(payment.amount),
+                    "reason": reversal.reason,
+                },
+            )
+            record_domain_event(
+                session,
+                ctx=resolved,
+                event_type=PAYMENT_REVERSED,
+                aggregate_type=PAYMENT_ENTITY_TYPE,
+                aggregate_id=str(payment.id),
+                payload={
+                    "payment_id": payment.id,
+                    "charge_id": charge.id,
+                    "reversal_id": reversal.id,
+                    "amount": str(payment.amount),
+                    "charge_outstanding": str(outstanding),
+                },
+            )
+            settle_receipt(
+                receipt,
+                resource_type=PAYMENT_ENTITY_TYPE,
+                resource_id=str(payment.id),
+                outcome_json=_payment_outcome(payment),
+            )
+    except IntegrityError as exc:
+        if not _is_duplicate_reversal(exc):
+            raise
+        raise AppError(ErrorCode.INVALID_INPUT, "The payment is already reversed.") from exc
+    return payment
+
+
 # --- Collection follow-ups --------------------------------------------------
 
 
@@ -1036,15 +1208,7 @@ def _follow_up_projection_rows(
     location_id: int | None = None,
     order_opened_desc: bool = False,
 ) -> list[ChargeFollowUp]:
-    paid_expr = (
-        select(func.coalesce(func.sum(Payment.amount), 0))
-        .where(
-            Payment.organization_id == Charge.organization_id,
-            Payment.charge_id == Charge.id,
-        )
-        .correlate(Charge)
-        .scalar_subquery()
-    )
+    paid_expr = _net_paid_expr()
     outstanding_expr = Charge.amount - paid_expr
     active_expr = and_(ChargeFollowUp.state == "open", outstanding_expr > 0)
     statement = (

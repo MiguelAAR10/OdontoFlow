@@ -58,8 +58,10 @@ from app.scheduling.models import (
     AppointmentProposal,
     AppointmentRescheduleProposal,
 )
+from app.events.types import APPOINTMENT_CANCELLED
 from app.scheduling.service import (
     _availability_inputs,
+    _emit_appointment_event,
     _load_active_member,
     _load_active_scoped,
     _require_capability,
@@ -842,6 +844,7 @@ def confirm_cancellation_proposal(
                 "reason_recorded": proposal.reason is not None,
             },
         )
+        _emit_appointment_event(session, ctx, appointment, APPOINTMENT_CANCELLED)
         settle_receipt(
             receipt,
             resource_type="appointment",

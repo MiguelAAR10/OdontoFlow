@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Literal
 
 
@@ -128,6 +128,25 @@ class PaymentRead(BaseModel):
     reconciliation_note: str | None
     verification_status: Literal["unverified", "verified"]
     verified_at: datetime | None
+    # B0.5: a reversed payment keeps its row; it just stops counting as paid.
+    reversed: bool = False
+    reversed_at: datetime | None = None
+
+
+class PaymentReverse(BaseModel):
+    """B0.5: full reversal of one payment; the reason is mandatory."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("reason must not be blank.")
+        return value
 
 
 class PaymentVerify(BaseModel):

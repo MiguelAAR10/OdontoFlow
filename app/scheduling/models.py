@@ -125,7 +125,12 @@ class Appointment(Base):
     location: Mapped[Location] = relationship(foreign_keys=[location_id])  # noqa: F821
 
     __table_args__ = (
-        CheckConstraint("state IN ('confirmed', 'cancelled')", name="ck_appointments_state"),
+        # B0.5: ``completed`` / ``no_show`` are outcomes reachable only from
+        # ``confirmed``; the GiST below still covers ``confirmed`` alone.
+        CheckConstraint(
+            "state IN ('confirmed', 'cancelled', 'completed', 'no_show')",
+            name="ck_appointments_state",
+        ),
         CheckConstraint("end_utc > start_utc", name="ck_appointments_interval"),
         # Partial GiST exclusion: only confirmed appointments consume the
         # practitioner's schedule. Cancelled rows never block interval reuse.

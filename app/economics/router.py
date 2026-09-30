@@ -26,6 +26,7 @@ from app.economics.schemas import (
     ChargeRead,
     PaymentCreate,
     PaymentRead,
+    PaymentReverse,
     PaymentVerify,
     PaymentMethod,
     ProductCreate,
@@ -40,6 +41,7 @@ from app.economics.service import (
     OP_FOLLOW_UPS_RESCHEDULE,
     OP_CONSUMPTIONS_CREATE,
     OP_PAYMENTS_CREATE,
+    OP_PAYMENTS_REVERSE,
     OP_PAYMENTS_VERIFY,
     OP_PRODUCTS_CREATE,
     charge_paid_amount,
@@ -59,6 +61,7 @@ from app.economics.service import (
     open_follow_up,
     reschedule_follow_up,
     close_follow_up,
+    reverse_payment,
     verify_payment,
 )
 from app.idempotency.service import run_idempotent_command
@@ -184,6 +187,8 @@ def _payment_read(payment) -> PaymentRead:
         reconciliation_note=payment.reconciliation_note,
         verification_status=payment.verification_status,
         verified_at=payment.verified_at,
+        reversed=payment.reversed_at is not None,
+        reversed_at=payment.reversed_at,
     )
 
 
@@ -204,6 +209,10 @@ def _payment_read_from_outcome(outcome: dict) -> PaymentRead:
             _dt.fromisoformat(outcome["verified_at"])
             if outcome.get("verified_at")
             else None
+        ),
+        reversed=bool(outcome.get("reversed_at")),
+        reversed_at=(
+            _dt.fromisoformat(outcome["reversed_at"]) if outcome.get("reversed_at") else None
         ),
     )
 
@@ -460,6 +469,32 @@ def list_all_payments_route(
             paid_to=paid_to,
         )
     ]
+
+
+@router.post("/payments/{payment_id}/reverse", response_model=PaymentRead)
+def reverse_payment_route(
+    payment_id: int,
+    payload: PaymentReverse,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> PaymentRead:
+    """B0.5: full reversal as a new record. Human principals only (L4): agent, integration and system are refused."""
+    ctx = resolve_http_context(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=reverse_payment,
+        operation_name=OP_PAYMENTS_REVERSE,
+        key=_idempotency_key(request),
+        ctx=ctx,
+        params={"payment_id": payment_id, **payload.model_dump()},
+        payment_id=payment_id,
+        data=payload,
+    )
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+        return _payment_read_from_outcome(outcome.outcome)
+    return _payment_read(outcome.result)
 
 
 @router.post("/payments/{payment_id}/verify", response_model=PaymentRead)

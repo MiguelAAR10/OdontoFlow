@@ -1,5 +1,31 @@
 # OdontoFlow Changelog
 
+## B0.5 — Domain gaps: outcomes, reversals, reorder points, waitlist, domain events (2026-10-01)
+
+- Migration `0020_domain_gaps`: `ck_appointments_state` widened to
+  `completed`/`no_show` (GiST unchanged); new tables `domain_events`,
+  `payment_reversals`, `reorder_points`, `waitlist_entries` with composite
+  tenant FKs; 5 new permission codes (48 → 53). The downgrade refuses (no data
+  rewrite) while `completed`/`no_show` appointments or `payment_reversals`
+  rows exist.
+- `POST /appointments/{id}/complete` and `/no-show` (`appointments.record_outcome`;
+  only `confirmed` appointments that have already started).
+- `POST /payments/{id}/reverse`: full reversal as a new row; `payments` is never
+  edited and the charge's paid amount stops counting the payment. Human
+  principals only (L4): agent, integration and system principals get
+  `INVALID_INPUT` before any receipt or read. `PaymentRead` gains
+  `reversed`/`reversed_at` (additive).
+- `PUT /products/{id}/reorder-points/{location_id}`, `GET /inventory/low-stock`;
+  stock-decreasing paths emit `inventory.below_reorder` only when they cross the
+  minimum.
+- Minimal waitlist: `POST /waitlist`, `GET /waitlist`, `POST /waitlist/{id}/cancel`.
+- `record_domain_event` (`app/events/`) stages a `domain_events` row in the
+  caller's transaction for `appointment.cancelled|completed|no_show`,
+  `payment.recorded|reversed`, `inventory.below_reorder`, `waitlist.created`.
+- `reception-staff-demo` (integration) gains 4 of the 5 codes, but not
+  `payments.reverse`. The demo seed adds 3 open waitlist entries and reorder points.
+- Regenerated `docs/api/openapi.json`/`openapi.yaml` (7 new routes, additive).
+
 ## B0 — Demo base: economics/inventory auth, agent proposes only, demo seed (2026-09-30)
 
 - Economics (charges, payments, follow-ups, products, consumptions) and

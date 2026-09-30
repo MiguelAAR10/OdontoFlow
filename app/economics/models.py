@@ -30,9 +30,10 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    select,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from app.db import Base
 
@@ -325,3 +326,56 @@ class ChargeFollowUp(Base):
             postgresql_where=text("state = 'open'"),
         ),
     )
+
+
+class PaymentReversal(Base):
+    """B0.5: the full reversal of one payment, recorded as a new row.
+
+    ``payments`` stays append-only and positive; the paid amount of a charge is
+    ``Σ payments − Σ reversed payments``. ``UNIQUE(organization_id, payment_id)``
+    makes a second reversal of the same payment structurally impossible.
+    """
+
+    __tablename__ = "payment_reversals"
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT", name="fk_payment_reversals_organization"),
+        nullable=False,
+    )
+    payment_id: Mapped[int] = mapped_column(nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    reversed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_by_principal_id: Mapped[int] = mapped_column(
+        ForeignKey("principals.id", ondelete="RESTRICT", name="fk_payment_reversals_principal"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(btrim(reason)) > 0", name="ck_payment_reversals_reason"),
+        UniqueConstraint("organization_id", "id", name="uq_payment_reversals_organization_id"),
+        UniqueConstraint(
+            "organization_id", "payment_id", name="uq_payment_reversals_org_payment"
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "payment_id"],
+            ["payments.organization_id", "payments.id"],
+            ondelete="RESTRICT",
+            name="fk_payment_reversals_organization_payment",
+        ),
+    )
+
+
+# Loaded in the same SELECT as every Payment (correlated subquery on the
+# UNIQUE(organization_id, payment_id) index): ``None`` while the payment counts.
+Payment.reversed_at = column_property(
+    select(PaymentReversal.reversed_at)
+    .where(
+        PaymentReversal.organization_id == Payment.organization_id,
+        PaymentReversal.payment_id == Payment.id,
+    )
+    .correlate_except(PaymentReversal)
+    .scalar_subquery()
+)

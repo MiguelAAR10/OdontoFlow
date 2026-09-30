@@ -20,19 +20,25 @@ from app.inventory.schemas import (
     AdjustmentCreate,
     BalanceRead,
     EntryCreate,
+    LowStockRead,
     MovementRead,
+    ReorderPointRead,
+    ReorderPointUpsert,
     TransferCreate,
     TransferRead,
 )
 from app.inventory.service import (
     OP_ADJUSTMENTS_CREATE,
     OP_ENTRIES_CREATE,
+    OP_REORDER_POINTS_SET,
     OP_TRANSFERS_CREATE,
     get_balance,
+    list_low_stock,
     list_movements,
     register_adjustment,
     register_entry,
     transfer_product,
+    upsert_reorder_point,
 )
 
 router = APIRouter()
@@ -208,3 +214,67 @@ def get_balance_route(
         location_id=location_id,
         available=get_balance(db, product_id, location_id=location_id, ctx=ctx),
     )
+
+
+# --- B0.5: reorder points and low stock -------------------------------------
+
+
+@router.put(
+    "/products/{product_id}/reorder-points/{location_id}",
+    response_model=ReorderPointRead,
+    status_code=200,
+)
+def upsert_reorder_point_route(
+    product_id: int,
+    location_id: int,
+    payload: ReorderPointUpsert,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> ReorderPointRead:
+    ctx = resolve_http_context(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=upsert_reorder_point,
+        operation_name=OP_REORDER_POINTS_SET,
+        key=_idempotency_key(request),
+        ctx=ctx,
+        params={"product_id": product_id, "location_id": location_id, **payload.model_dump()},
+        product_id=product_id,
+        location_id=location_id,
+        data=payload,
+    )
+    if outcome.replayed:
+        from datetime import datetime as _dt
+
+        response.headers[REPLAY_HEADER] = "true"
+        stored = outcome.outcome
+        return ReorderPointRead(
+            id=int(stored["resource_id"]),
+            product_id=stored["product_id"],
+            location_id=stored["location_id"],
+            min_quantity=Decimal(stored["min_quantity"]),
+            updated_at=_dt.fromisoformat(stored["updated_at"]),
+        )
+    return ReorderPointRead.model_validate(outcome.result)
+
+
+@router.get("/inventory/low-stock", response_model=list[LowStockRead])
+def list_low_stock_route(
+    request: Request,
+    db: Session = Depends(get_db),
+    location_id: int | None = Query(default=None, description="Restrict to one location."),
+) -> list[LowStockRead]:
+    ctx = resolve_http_context(request)
+    return [
+        LowStockRead(
+            product_id=row.product_id,
+            product_name=row.product_name,
+            unit=row.unit,
+            location_id=row.location_id,
+            location_name=row.location_name,
+            balance=row.balance,
+            min_quantity=row.min_quantity,
+        )
+        for row in list_low_stock(db, ctx=ctx, location_id=location_id)
+    ]

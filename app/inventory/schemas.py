@@ -78,3 +78,33 @@ class TransferRead(BaseModel):
     reason: str | None
     out_movement_id: int
     in_movement_id: int
+
+
+class ReorderPointUpsert(BaseModel):
+    """B0.5: the minimum desired balance of a product at one location."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    min_quantity: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
+
+
+class ReorderPointRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    product_id: int
+    location_id: int
+    min_quantity: Decimal
+    updated_at: datetime
+
+
+class LowStockRead(BaseModel):
+    """One product × location whose derived balance is below its reorder point."""
+
+    product_id: int
+    product_name: str
+    unit: str
+    location_id: int
+    location_name: str
+    balance: Decimal
+    min_quantity: Decimal

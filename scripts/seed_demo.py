@@ -10,9 +10,9 @@ services with the explicit ``system`` execution context:
   partially paid and overdue (outstanding balance and at least
   ``OVERDUE_MIN_AGE_DAYS`` old), including one S/ 180 charge 12 days old;
 * consumable/resale products whose stock is low in Lince and ample in
-  Jesús María (the demo transfers between them).
-
-There is no waitlist yet (it lands in B0.5).
+  Jesús María (the demo transfers between them), with reorder points that
+  make the low one show in ``GET /inventory/low-stock`` (B0.5);
+* three ``open`` waitlist entries for "Limpieza dental" (B0.5).
 
 Dates. Every date is an offset from one *anchor* day: ``--anchor-date`` or, by
 default, today in America/Lima. Offsets, hours, names and amounts come from
@@ -76,11 +76,17 @@ from app.economics.service import (  # noqa: E402
 from app.iam.context import ExecutionContext  # noqa: E402
 from app.iam.credentials import issue_credential  # noqa: E402
 from app.inventory.models import InventoryMovement  # noqa: E402
-from app.inventory.schemas import EntryCreate  # noqa: E402
-from app.inventory.service import register_entry  # noqa: E402
+from app.inventory.models import ReorderPoint  # noqa: E402
+from app.inventory.schemas import EntryCreate, ReorderPointUpsert  # noqa: E402
+from app.inventory.service import register_entry, upsert_reorder_point  # noqa: E402
 from app.organization.models import Location, Practitioner  # noqa: E402
 from app.scheduling.models import Appointment  # noqa: E402
 from app.scheduling.service import book_appointment  # noqa: E402
+from app.scheduling.waitlist import (  # noqa: E402
+    WaitlistEntry,
+    WaitlistEntryCreate,
+    create_waitlist_entry,
+)
 from app.tenancy import BOOTSTRAP_ORGANIZATION_ID  # noqa: E402
 from scripts.issue_credential import _assign_profile, _resolve_principal  # noqa: E402
 from scripts.seed_reception_demo import seed_reception_demo  # noqa: E402
@@ -176,6 +182,16 @@ PRODUCTS = (
      {LINCE: "40", JESUS_MARIA: "3", MAGDALENA: "25"}),
 )
 LOW_STOCK_PRODUCT = PRODUCTS[0][0]
+#: Reorder minimum per location (B0.5). Only ``LOW_STOCK_PRODUCT`` gets one:
+#: 4 < 10 in Lince (low), 120 and 30 elsewhere (ample).
+REORDER_POINTS = ((LOW_STOCK_PRODUCT, (LINCE, JESUS_MARIA, MAGDALENA), "10"),)
+#: Patient indexes (future appointments) that also wait for an earlier slot.
+WAITLIST_ROWS = (
+    (30, LINCE, "morning"),
+    (31, JESUS_MARIA, "afternoon"),
+    (32, MAGDALENA, "any"),
+)
+WAITLIST_SERVICE = "Limpieza dental"
 
 
 def default_anchor() -> date:
@@ -452,6 +468,77 @@ def _seed_inventory(session: Session, ctx: ExecutionContext, locations: dict[str
                 )
 
 
+def _seed_reorder_points(
+    session: Session, ctx: ExecutionContext, locations: dict[str, Location]
+) -> None:
+    org_id = ctx.organization_id
+    for product_name, location_names, minimum in REORDER_POINTS:
+        product = session.scalar(
+            select(Product).where(Product.organization_id == org_id, Product.name == product_name)
+        )
+        for location_name in location_names:
+            location = locations[location_name]
+            exists = session.scalar(
+                select(ReorderPoint.id).where(
+                    ReorderPoint.organization_id == org_id,
+                    ReorderPoint.product_id == product.id,
+                    ReorderPoint.location_id == location.id,
+                )
+            )
+            if exists is None:
+                upsert_reorder_point(
+                    _idle(session),
+                    product.id,
+                    location.id,
+                    ReorderPointUpsert(min_quantity=Decimal(minimum)),
+                    ctx=ctx,
+                )
+
+
+def _seed_waitlist(
+    session: Session,
+    ctx: ExecutionContext,
+    *,
+    anchor: date,
+    locations: dict[str, Location],
+    services: dict[str, Service],
+    patients: list[dict],
+) -> None:
+    org_id = ctx.organization_id
+    service = services[WAITLIST_SERVICE]
+    for index, location_name, window in WAITLIST_ROWS:
+        row = patients[index]
+        lead = session.scalar(
+            select(Lead).where(Lead.organization_id == org_id, Lead.contact_phone == row["phone"])
+        )
+        patient = session.scalar(
+            select(Patient).where(Patient.organization_id == org_id, Patient.dni == row["dni"])
+        )
+        exists = session.scalar(
+            select(WaitlistEntry.id).where(
+                WaitlistEntry.organization_id == org_id,
+                WaitlistEntry.lead_id == lead.id,
+                WaitlistEntry.service_id == service.id,
+                WaitlistEntry.status == "open",
+            )
+        )
+        if exists is None:
+            create_waitlist_entry(
+                _idle(session),
+                WaitlistEntryCreate(
+                    lead_id=lead.id,
+                    patient_id=patient.id,
+                    service_id=service.id,
+                    location_id=locations[location_name].id,
+                    earliest_date=anchor + timedelta(days=1),
+                    latest_date=anchor + timedelta(days=14),
+                    preferred_window=window,
+                    notes="Quiere adelantar su cita si se libera un horario.",
+                ),
+                ctx=ctx,
+            )
+
+
 def _summary(session: Session, organization_id: int, anchor: date) -> dict[str, int]:
     def count(model) -> int:
         return session.scalar(
@@ -559,6 +646,11 @@ def seed_demo(
         session.commit()
 
     _seed_inventory(session, ctx, locations)
+    _seed_reorder_points(session, ctx, locations)
+    _seed_waitlist(
+        session, ctx, anchor=anchor, locations=locations, services=services, patients=patients
+    )
+    session.commit()
     return _summary(session, organization_id, anchor)
 
 

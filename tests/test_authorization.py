@@ -779,8 +779,8 @@ def test_the_seeded_catalog_is_exactly_the_m7_closed_set(session):
     codes = set(session.scalars(select(Permission.code)))
     assert codes == set(PERMISSION_CODES)
     # 39 existing through booking + 4 receptionist mutations + operator resume
-    # + payments reconciliation + collection follow-ups.
-    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 48
+    # + payments reconciliation + collection follow-ups + 5 B0.5 domain gaps.
+    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 53
 
 
 def test_every_permission_code_follows_the_naming_convention():
@@ -794,9 +794,12 @@ def test_every_permission_code_follows_the_naming_convention():
         "manage",
         "book",
         "resume",
+        # B0.5 (approved spec 2026-10-01): outcome recording and full reversal.
+        "record_outcome",
+        "reverse",
     }
     for code in PERMISSION_CODES:
-        assert re.fullmatch(r"[a-z_]+\.[a-z]+", code), code
+        assert re.fullmatch(r"[a-z_]+\.[a-z_]+", code), code
         domain, action = code.split(".")
         assert action in verbs, code
         assert "*" not in code

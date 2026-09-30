@@ -58,9 +58,14 @@ EXPECTED_TABLES = {
     "promotions",
     "reception_handoffs",
     "audit_events",
+    # B0.5 — domain gaps (migration 0020).
+    "domain_events",
+    "payment_reversals",
+    "reorder_points",
+    "waitlist_entries",
 }
 
-HEAD_REVISION = "0019"
+HEAD_REVISION = "0020"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (

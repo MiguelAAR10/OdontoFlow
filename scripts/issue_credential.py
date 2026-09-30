@@ -48,6 +48,7 @@ from app.iam.permissions import (  # noqa: E402
     APPOINTMENTS_CANCEL,
     APPOINTMENTS_CREATE,
     APPOINTMENTS_READ,
+    APPOINTMENTS_RECORD_OUTCOME,
     APPOINTMENTS_RESCHEDULE,
     AVAILABILITY_READ,
     CHARGES_CREATE,
@@ -81,9 +82,12 @@ from app.iam.permissions import (  # noqa: E402
     PRACTITIONERS_READ,
     PRODUCTS_CREATE,
     PRODUCTS_READ,
+    REORDER_POINTS_MANAGE,
     SERVICES_READ,
     VISITS_CREATE,
     VISITS_READ,
+    WAITLIST_MANAGE,
+    WAITLIST_READ,
 )
 from app.tenancy import BOOTSTRAP_ORGANIZATION_ID  # noqa: E402
 
@@ -153,6 +157,12 @@ PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         PRODUCTS_CREATE,
         MOVEMENTS_READ,
         MOVEMENTS_CREATE,
+        # B0.5 domain gaps. ``payments.reverse`` is deliberately absent: a
+        # reversal is L4 / human-only and this is an integration credential.
+        APPOINTMENTS_RECORD_OUTCOME,
+        REORDER_POINTS_MANAGE,
+        WAITLIST_READ,
+        WAITLIST_MANAGE,
     ),
 }
 

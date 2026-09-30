@@ -1050,6 +1050,11 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
             "appointment_reschedule_proposals",
         "promotions",
         "reception_handoffs",
+        # B0.5 — domain gaps (migration 0020).
+        "domain_events",
+        "payment_reversals",
+        "reorder_points",
+        "waitlist_entries",
     }
     nullable_by_table = dict(rows)
     assert {

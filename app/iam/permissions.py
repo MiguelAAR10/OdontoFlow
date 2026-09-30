@@ -64,6 +64,12 @@ CONTACT_APPOINTMENTS_RESCHEDULE = "contact_appointments.reschedule"
 CONTACT_PROFILES_MANAGE = "contact_profiles.manage"
 CONVERSATIONS_MANAGE = "conversations.manage"
 CONVERSATIONS_RESUME = "conversations.resume"
+# B0.5 — domain gaps (migration 0020).
+APPOINTMENTS_RECORD_OUTCOME = "appointments.record_outcome"
+PAYMENTS_REVERSE = "payments.reverse"
+REORDER_POINTS_MANAGE = "reorder_points.manage"
+WAITLIST_READ = "waitlist.read"
+WAITLIST_MANAGE = "waitlist.manage"
 
 #: The closed code-owned set seeded by migrations. Future verticals extend it
 #: under M6; there are no wildcard or implicit permissions.
@@ -131,6 +137,12 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
         CONVERSATIONS_RESUME,
         "Resume automation after a human receptionist resolves the handoff",
     ),
+    # B0.5 — domain gaps.
+    (APPOINTMENTS_RECORD_OUTCOME, "Mark appointments completed or no-show"),
+    (PAYMENTS_REVERSE, "Reverse a recorded payment in full"),
+    (REORDER_POINTS_MANAGE, "Set inventory reorder points per product and location"),
+    (WAITLIST_READ, "Read the appointment waitlist"),
+    (WAITLIST_MANAGE, "Add and cancel appointment waitlist entries"),
 )
 
 PERMISSION_CODES: tuple[str, ...] = tuple(code for code, _name in PERMISSION_CATALOG)

@@ -119,7 +119,7 @@ def test_check_rejects_invalid_appointment_state(session):
                 text(
                     "INSERT INTO appointments (organization_id, lead_id, service_id, practitioner_id, "
                     "location_id, start_utc, end_utc, state) VALUES (:org, :l, :s, :p, :lo, "
-                    "'2026-08-13T09:00:00+00:00', '2026-08-13T10:00:00+00:00', 'completed')"
+                    "'2026-08-13T09:00:00+00:00', '2026-08-13T10:00:00+00:00', 'bogus')"
                 ),
                 {
                     "org": ids["organization_id"],

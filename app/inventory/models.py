@@ -153,3 +153,44 @@ class InventoryMovement(Base):
             "id",
         ),
     )
+
+
+class ReorderPoint(Base):
+    """B0.5: the minimum desired balance of one product at one location."""
+
+    __tablename__ = "reorder_points"
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT", name="fk_reorder_points_organization"),
+        nullable=False,
+    )
+    product_id: Mapped[int] = mapped_column(nullable=False)
+    location_id: Mapped[int] = mapped_column(nullable=False)
+    min_quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("min_quantity >= 0", name="ck_reorder_points_min_quantity"),
+        UniqueConstraint("organization_id", "id", name="uq_reorder_points_organization_id"),
+        UniqueConstraint(
+            "organization_id",
+            "product_id",
+            "location_id",
+            name="uq_reorder_points_org_product_location",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "product_id"],
+            ["products.organization_id", "products.id"],
+            ondelete="RESTRICT",
+            name="fk_reorder_points_organization_product",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "location_id"],
+            ["locations.organization_id", "locations.id"],
+            ondelete="RESTRICT",
+            name="fk_reorder_points_organization_location",
+        ),
+    )

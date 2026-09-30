@@ -42,12 +42,15 @@ from app.clinical.models import Patient
 from app.commercial.models import Lead
 from app.context import default_context
 from app.errors import AppError, ErrorCode
+from app.events.service import record_domain_event
+from app.events.types import APPOINTMENT_CANCELLED, APPOINTMENT_COMPLETED, APPOINTMENT_NO_SHOW
 from app.iam.context import ExecutionContext
 from app.idempotency.service import IdempotencyClaim, claim_receipt, settle_receipt
 from app.iam.permissions import (
     APPOINTMENTS_CANCEL,
     APPOINTMENTS_CREATE,
     APPOINTMENTS_READ,
+    APPOINTMENTS_RECORD_OUTCOME,
     APPOINTMENTS_RESCHEDULE,
 )
 from app.iam.service import require_permission
@@ -65,6 +68,13 @@ APPOINTMENT_CANCELLED_ACTION = "appointment.cancelled"
 APPOINTMENT_RESCHEDULED_ACTION = "appointment.rescheduled"
 CONFIRMED = "confirmed"
 CANCELLED = "cancelled"
+COMPLETED = "completed"
+NO_SHOW = "no_show"
+
+APPOINTMENT_COMPLETED_ACTION = "appointment.completed"
+APPOINTMENT_NO_SHOW_ACTION = "appointment.no_show"
+OP_APPOINTMENTS_COMPLETE = "appointments.complete"
+OP_APPOINTMENTS_NO_SHOW = "appointments.no_show"
 
 
 def _require_aware(start: datetime) -> datetime:
@@ -576,6 +586,7 @@ def cancel_appointment(
             before_state=before_state,
             after_state=_appointment_state(appointment),
         )
+        _emit_appointment_event(session, resolved, appointment, APPOINTMENT_CANCELLED)
         settle_receipt(
             receipt,
             resource_type=APPOINTMENT_ENTITY_TYPE,
@@ -584,6 +595,134 @@ def cancel_appointment(
         )
 
     return appointment
+
+
+def _emit_appointment_event(
+    session: Session, ctx: ExecutionContext, appointment: Appointment, event_type: str
+) -> None:
+    """Stage the appointment domain event next to its audit row (B0.5)."""
+    record_domain_event(
+        session,
+        ctx=ctx,
+        event_type=event_type,
+        aggregate_type=APPOINTMENT_ENTITY_TYPE,
+        aggregate_id=str(appointment.id),
+        payload={
+            "appointment_id": appointment.id,
+            "state": appointment.state,
+            "start_utc": appointment.start_utc.astimezone(UTC).isoformat(),
+            "end_utc": appointment.end_utc.astimezone(UTC).isoformat(),
+            "lead_id": appointment.lead_id,
+            "patient_id": appointment.patient_id,
+            "service_id": appointment.service_id,
+            "practitioner_id": appointment.practitioner_id,
+            "location_id": appointment.location_id,
+        },
+    )
+
+
+def _record_outcome(
+    session: Session,
+    appointment_id: int,
+    *,
+    new_state: str,
+    action: str,
+    event_type: str,
+    ctx: ExecutionContext | None,
+    organization_id: int | None,
+    idempotency: IdempotencyClaim | None,
+) -> Appointment:
+    resolved = _resolved_context(ctx, organization_id)
+    org_id = resolved.organization_id
+
+    with session.begin():
+        receipt = claim_receipt(session, resolved, idempotency)
+        appointment = _lock_appointment(session, appointment_id, org_id)
+        if ctx is not None:
+            require_permission(
+                session,
+                resolved,
+                APPOINTMENTS_RECORD_OUTCOME,
+                location_id=appointment.location_id,
+            )
+        _require_confirmed(appointment)
+        if appointment.start_utc > datetime.now(UTC):
+            raise AppError(ErrorCode.INVALID_INPUT, "The appointment has not started yet.")
+
+        before_state = _appointment_state(appointment)
+        appointment.state = new_state
+        session.flush()
+
+        record_event(
+            session,
+            ctx=resolved,
+            entity_type=APPOINTMENT_ENTITY_TYPE,
+            entity_id=str(appointment.id),
+            action=action,
+            before_state=before_state,
+            after_state=_appointment_state(appointment),
+        )
+        _emit_appointment_event(session, resolved, appointment, event_type)
+        settle_receipt(
+            receipt,
+            resource_type=APPOINTMENT_ENTITY_TYPE,
+            resource_id=str(appointment.id),
+            outcome_json=_appointment_outcome(appointment),
+        )
+
+    return appointment
+
+
+def complete_appointment(
+    session: Session,
+    appointment_id: int,
+    *,
+    ctx: ExecutionContext | None = None,
+    organization_id: int | None = None,
+    idempotency: IdempotencyClaim | None = None,
+) -> Appointment:
+    """Mark a confirmed appointment that already started as ``completed`` (B0.5).
+
+    Same transaction shape as :func:`cancel_appointment` (claim → lock →
+    permission → transition → audit + domain event → receipt). Only
+    ``confirmed`` appointments whose ``start_utc`` is not in the future move;
+    anything else is ``ENTITY_INACTIVE`` / ``INVALID_INPUT``.
+
+    ``create_visit`` still requires a ``confirmed`` appointment, so the
+    supported order is: create the visit from the appointment, then complete
+    it. A ``completed`` row leaves the GiST (it covers ``confirmed`` only).
+    """
+    return _record_outcome(
+        session,
+        appointment_id,
+        new_state=COMPLETED,
+        action=APPOINTMENT_COMPLETED_ACTION,
+        event_type=APPOINTMENT_COMPLETED,
+        ctx=ctx,
+        organization_id=organization_id,
+        idempotency=idempotency,
+    )
+
+
+def mark_no_show(
+    session: Session,
+    appointment_id: int,
+    *,
+    ctx: ExecutionContext | None = None,
+    organization_id: int | None = None,
+    idempotency: IdempotencyClaim | None = None,
+) -> Appointment:
+    """Mark a confirmed appointment that already started as ``no_show`` (B0.5)."""
+    return _record_outcome(
+        session,
+        appointment_id,
+        new_state=NO_SHOW,
+        action=APPOINTMENT_NO_SHOW_ACTION,
+        event_type=APPOINTMENT_NO_SHOW,
+        ctx=ctx,
+        organization_id=organization_id,
+        idempotency=idempotency,
+    )
 
 
 def reschedule_appointment(
