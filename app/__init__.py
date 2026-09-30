@@ -14,6 +14,7 @@ from app.inventory.router import router as inventory_router
 from app.http_security import SecurityBoundaryMiddleware, install_security_openapi
 from app.messaging.router import router as messaging_router
 from app.organization.router import router as organization_router
+from app.proposals.router import router as proposals_router
 from app.scheduling.router import router as scheduling_router
 from app.scheduling.waitlist import router as waitlist_router
 
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
     # the same authenticated boundary. No business router is left on the
     # anonymous compatibility path; only ``/health`` is public.
     # IDN: ``GET /me`` (iam_router) is on the same boundary.
+    # B2: agent proposals and the approval inbox (``/agent/*``) too.
     authenticated = [Depends(require_authenticated_context)]
     for business_router in (
         agent_tools_router,
@@ -83,6 +85,7 @@ def create_app() -> FastAPI:
         inventory_router,
         messaging_router,
         organization_router,
+        proposals_router,
         scheduling_router,
         waitlist_router,
     ):

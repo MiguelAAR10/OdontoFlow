@@ -779,8 +779,9 @@ def test_the_seeded_catalog_is_exactly_the_m7_closed_set(session):
     codes = set(session.scalars(select(Permission.code)))
     assert codes == set(PERMISSION_CODES)
     # 39 existing through booking + 4 receptionist mutations + operator resume
-    # + payments reconciliation + collection follow-ups + 5 B0.5 domain gaps.
-    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 53
+    # + payments reconciliation + collection follow-ups + 5 B0.5 domain gaps
+    # + 3 B2 proposal codes.
+    assert len(PERMISSION_CODES) == len(set(PERMISSION_CODES)) == 56
 
 
 def test_every_permission_code_follows_the_naming_convention():
@@ -797,6 +798,8 @@ def test_every_permission_code_follows_the_naming_convention():
         # B0.5 (approved spec 2026-10-01): outcome recording and full reversal.
         "record_outcome",
         "reverse",
+        # B2: a human approves or declines an agent proposal.
+        "decide",
     }
     for code in PERMISSION_CODES:
         assert re.fullmatch(r"[a-z_]+\.[a-z_]+", code), code
@@ -996,3 +999,27 @@ def test_credential_profiles_use_only_catalog_codes_and_keep_reversal_human_only
     for codes in PROFILE_PERMISSIONS.values():
         assert "payments.reverse" not in codes
     assert not set(HUMAN_PROFILE_PERMISSIONS) & set(PROFILE_PERMISSIONS)
+
+
+def test_only_humans_can_ever_decide_proposals():
+    """B2: ``proposals.decide`` is never held by an agent/integration profile;
+    secretaria decides collection kinds; no kind requires an L4 code."""
+    from app.proposals.executors import KINDS
+    from scripts.issue_credential import HUMAN_PROFILE_PERMISSIONS, PROFILE_PERMISSIONS
+
+    for codes in PROFILE_PERMISSIONS.values():
+        assert "proposals.decide" not in codes
+    assert set(PROFILE_PERMISSIONS["collections-agent"]) == {
+        "proposals.create",
+        "proposals.read",
+        "charges.read",
+        "follow_ups.read",
+    }
+    secretaria = set(HUMAN_PROFILE_PERMISSIONS["secretaria"])
+    assert {"proposals.read", "proposals.decide"} <= secretaria
+    assert {spec.required_permission for spec in KINDS.values()} <= secretaria
+    assert set(HUMAN_PROFILE_PERMISSIONS["administrador"]) >= secretaria
+    assert not {spec.required_permission for spec in KINDS.values()} & {
+        "payments.reverse",
+        "payments.manage",
+    }

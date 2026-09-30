@@ -1,5 +1,30 @@
 # OdontoFlow Changelog
 
+## B2 — Agent proposals, approval inbox, approve/decline (2026-10-01)
+
+- Migration `0021_agent_proposals` (head `0021`): table `agent_proposals`
+  (closed kind/status CHECKs, decider/result/error coherence, tenant composite
+  FKs incl. proposer/decider via `memberships`, unique `execution_key`,
+  partial unique `uq_agent_proposals_open_dedupe` on pending/approved) and the
+  permissions `proposals.read`, `proposals.create`, `proposals.decide` (56).
+- `app/proposals/`: `kind → executor` registry with `collection_reminder`
+  (queues a WhatsApp message on the patient's reachable conversation; opted-out
+  contacts are unreachable) and `collection_follow_up` (`open_follow_up`).
+  Hash, subject version, TTL (72 h), location and dedupe key are server-computed;
+  `agent_key` is derived from the principal, never from the body.
+- Routes: `POST /agent/proposals` (agent/integration, `Idempotency-Key`
+  required; 201 new / 200 dedupe), `GET /agent/inbox` (agent + appointment
+  proposals in one keyset-paged list), `GET /agent/proposals/{id}`,
+  `POST /agent/proposals/{id}/approve` (human only, `Idempotency-Key`; exactly
+  one execution under the human's context) and `/decline` (idempotent).
+- New error codes outside `app/errors.py` (IamErrorCode pattern):
+  `PROPOSAL_HASH_MISMATCH` 409, `PROPOSAL_SUPERSEDED` 409,
+  `PROPOSAL_NOT_PENDING` 409, `PROPOSAL_EXPIRED` 410.
+- Profiles: `secretaria` += `proposals.read`, `proposals.decide`,
+  `deliveries.create` (`administrador` inherits); new agent profile
+  `collections-agent` (propose only; never `proposals.decide`).
+- Regenerated `docs/api/openapi.json`/`openapi.yaml` (5 new routes, additive).
+
 ## IDN — Human identity per person, secretaria/administrador, GET /me (2026-10-01)
 
 - `scripts/issue_credential.py`: `--type human` is now issuable, only with the

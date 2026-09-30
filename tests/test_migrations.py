@@ -63,9 +63,11 @@ EXPECTED_TABLES = {
     "payment_reversals",
     "reorder_points",
     "waitlist_entries",
+    # B2 — generic agent proposals (migration 0021).
+    "agent_proposals",
 }
 
-HEAD_REVISION = "0020"
+HEAD_REVISION = "0021"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (
@@ -607,3 +609,96 @@ def test_downgrade_0008_restores_0007_and_reupgrade_rederives_locations(
             text("SELECT location_id, type FROM inventory_movements ORDER BY id")
         ).all()
         assert rows == [(1, "SALIDA")]
+
+
+# --- B2: migration 0021 (agent_proposals) on a disposable database ----------
+
+B2_CODES = ("proposals.read", "proposals.create", "proposals.decide")
+
+
+def _b2_disposable_url() -> str:
+    url = _temporary_database_url()
+    server = create_engine(
+        make_url(TEST_DATABASE_URL).set(database="odontoflow").render_as_string(hide_password=False),
+        isolation_level="AUTOCOMMIT",
+    )
+    with server.connect() as conn:
+        conn.execute(text(f"CREATE DATABASE {url.rsplit('/', 1)[-1]}"))
+    server.dispose()
+    return url
+
+
+def _b2_drop(url: str) -> None:
+    server = create_engine(
+        make_url(TEST_DATABASE_URL).set(database="odontoflow").render_as_string(hide_password=False),
+        isolation_level="AUTOCOMMIT",
+    )
+    with server.connect() as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {url.rsplit('/', 1)[-1]} WITH (FORCE)"))
+    server.dispose()
+
+
+def _b2_state(engine):
+    with engine.connect() as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+            )
+        }
+        codes = set(
+            conn.execute(
+                text("SELECT code FROM permissions WHERE code = ANY(:codes)"),
+                {"codes": list(B2_CODES)},
+            ).scalars()
+        )
+    return tables, codes
+
+
+def _b2_insert(conn, *, status="pending", kind="collection_reminder"):
+    conn.execute(
+        text(
+            "INSERT INTO agent_proposals (organization_id, agent_key, kind, status, payload, "
+            "payload_hash, subject_type, subject_id, subject_version, reason, dedupe_key, "
+            "execution_key, proposed_by_principal_id, expires_at) VALUES (1, 'reception', "
+            ":kind, :status, '{}'::jsonb, repeat('a', 64), 'charge', '1', '0', 'motivo', "
+            ":dedupe, gen_random_uuid(), 1, now() + interval '1 day')"
+        ),
+        {"kind": kind, "status": status, "dedupe": f"{kind}:charge:{uuid.uuid4()}"},
+    )
+
+
+def test_migration_0021_round_trip_and_checks():
+    from sqlalchemy.exc import IntegrityError
+
+    url = _b2_disposable_url()
+    config = _alembic_config(url)
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "0020")
+        tables, codes = _b2_state(engine)
+        assert "agent_proposals" not in tables and codes == set()
+
+        command.upgrade(config, "0021")
+        tables, codes = _b2_state(engine)
+        assert "agent_proposals" in tables and codes == set(B2_CODES)
+        with engine.begin() as conn:
+            _b2_insert(conn)  # the system principal (id 1) is a member of org 1
+        for bad in ({"status": "running"}, {"kind": "inventory_transfer"}):
+            with pytest.raises(IntegrityError):
+                with engine.begin() as conn:
+                    _b2_insert(conn, **bad)
+        with pytest.raises(IntegrityError):  # approved needs a decider
+            with engine.begin() as conn:
+                _b2_insert(conn, status="approved")
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM agent_proposals"))
+
+        command.downgrade(config, "0020")
+        tables, codes = _b2_state(engine)
+        assert "agent_proposals" not in tables and codes == set()
+        command.upgrade(config, "0021")
+        assert "agent_proposals" in _b2_state(engine)[0]
+    finally:
+        engine.dispose()
+        _b2_drop(url)

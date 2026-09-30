@@ -84,6 +84,9 @@ from app.iam.permissions import (  # noqa: E402
     PRACTITIONERS_READ,
     PRODUCTS_CREATE,
     PRODUCTS_READ,
+    PROPOSALS_CREATE,
+    PROPOSALS_DECIDE,
+    PROPOSALS_READ,
     REORDER_POINTS_MANAGE,
     SERVICES_READ,
     VISITS_CREATE,
@@ -123,6 +126,9 @@ PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         DELIVERIES_CREATE,
     ),
     "outbound-dispatcher": (DELIVERIES_MANAGE,),
+    # B2: a collections agent (AIRY Cobranza) only *proposes*; it never holds
+    # ``proposals.decide`` nor the executors' permissions (a human approves).
+    "collections-agent": (PROPOSALS_CREATE, PROPOSALS_READ, CHARGES_READ, FOLLOW_UPS_READ),
     "reception-operator": (CONVERSATIONS_READ, CONVERSATIONS_RESUME),
     # B0 demo: the clinic staff surface the frontend drives (agenda, patients,
     # attendance, billing, inventory). No conversation/agent permissions. It is
@@ -205,6 +211,11 @@ _SECRETARIA: tuple[str, ...] = (
     # Chat reads and approving appointment proposals (human-only confirm).
     CONVERSATIONS_READ,
     CONTACT_APPOINTMENTS_BOOK,
+    # B2: the approval inbox. ``deliveries.create`` lets her approve a
+    # collection_reminder (the executor queues the WhatsApp message as her).
+    PROPOSALS_READ,
+    PROPOSALS_DECIDE,
+    DELIVERIES_CREATE,
 )
 HUMAN_PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "secretaria": _SECRETARIA,

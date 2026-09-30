@@ -70,6 +70,11 @@ PAYMENTS_REVERSE = "payments.reverse"
 REORDER_POINTS_MANAGE = "reorder_points.manage"
 WAITLIST_READ = "waitlist.read"
 WAITLIST_MANAGE = "waitlist.manage"
+# B2 — generic agent proposals (migration 0021). ``decide`` is human-only by
+# profile: no agent/integration profile ever holds it.
+PROPOSALS_READ = "proposals.read"
+PROPOSALS_CREATE = "proposals.create"
+PROPOSALS_DECIDE = "proposals.decide"
 
 #: The closed code-owned set seeded by migrations. Future verticals extend it
 #: under M6; there are no wildcard or implicit permissions.
@@ -143,6 +148,10 @@ PERMISSION_CATALOG: tuple[tuple[str, str], ...] = (
     (REORDER_POINTS_MANAGE, "Set inventory reorder points per product and location"),
     (WAITLIST_READ, "Read the appointment waitlist"),
     (WAITLIST_MANAGE, "Add and cancel appointment waitlist entries"),
+    # B2 — agent proposals.
+    (PROPOSALS_READ, "Read agent proposals and the approval inbox"),
+    (PROPOSALS_CREATE, "Create agent proposals for human approval"),
+    (PROPOSALS_DECIDE, "Approve or decline agent proposals"),
 )
 
 PERMISSION_CODES: tuple[str, ...] = tuple(code for code, _name in PERMISSION_CATALOG)

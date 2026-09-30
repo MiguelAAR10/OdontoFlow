@@ -6137,6 +6137,626 @@ paths:
             X-Correlation-Id:
               description: Canonical UUID used for end-to-end traceability.
               schema: *id001
+  /agent/proposals:
+    post:
+      tags:
+      - agent-proposals
+      summary: Create Proposal Route
+      operationId: create_proposal_route_agent_proposals_post
+      security:
+      - IntegrationBearer: []
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 36
+          maxLength: 36
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+          title: Idempotency-Key
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxItem'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '413':
+          description: The request body exceeds the configured limit.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /agent/inbox:
+    get:
+      tags:
+      - agent-proposals
+      summary: Inbox Route
+      operationId: inbox_route_agent_inbox_get
+      security:
+      - IntegrationBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          enum:
+          - pending
+          - approved
+          - executed
+          - failed
+          - declined
+          - expired
+          - superseded
+          type: string
+          default: pending
+          title: Status
+      - name: source
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - agent_proposal
+            - appointment_proposal
+            type: string
+          - type: 'null'
+          title: Source
+      - name: kind
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - collection_reminder
+            - collection_follow_up
+            - appointment_booking
+            type: string
+          - type: 'null'
+          title: Kind
+      - name: location_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Location Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 25
+          title: Limit
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Cursor
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPage'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /agent/proposals/{proposal_id}:
+    get:
+      tags:
+      - agent-proposals
+      summary: Get Proposal Route
+      operationId: get_proposal_route_agent_proposals__proposal_id__get
+      security:
+      - IntegrationBearer: []
+      parameters:
+      - name: proposal_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Proposal Id
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxItem'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /agent/proposals/{proposal_id}/approve:
+    post:
+      tags:
+      - agent-proposals
+      summary: Approve Proposal Route
+      operationId: approve_proposal_route_agent_proposals__proposal_id__approve_post
+      security:
+      - IntegrationBearer: []
+      parameters:
+      - name: proposal_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Proposal Id
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 36
+          maxLength: 36
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+          title: Idempotency-Key
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalApprove'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxItem'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '413':
+          description: The request body exceeds the configured limit.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+  /agent/proposals/{proposal_id}/decline:
+    post:
+      tags:
+      - agent-proposals
+      summary: Decline Proposal Route
+      operationId: decline_proposal_route_agent_proposals__proposal_id__decline_post
+      security:
+      - IntegrationBearer: []
+      parameters:
+      - name: proposal_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Proposal Id
+      - in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: header
+        name: X-Correlation-Id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/ProposalDecline'
+              - type: 'null'
+              title: Payload
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxItem'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '401':
+          description: A valid integration credential is required.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '403':
+          description: The authenticated principal lacks the required permission.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '429':
+          description: The credential rate limit was exceeded.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            Retry-After:
+              description: Seconds until the current rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 60
+        '503':
+          description: The integration surface is disabled.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+        '413':
+          description: The request body exceeds the configured limit.
+          content: *id002
+          headers:
+            X-Request-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
+            X-Correlation-Id:
+              description: Canonical UUID used for end-to-end traceability.
+              schema: *id001
   /availability-rules:
     post:
       summary: Create Availability Rule Route
@@ -8927,6 +9547,19 @@ components:
       - status
       - last_message_at
       title: ConversationRead
+    DecidedBy:
+      properties:
+        id:
+          type: integer
+          title: Id
+        display_name:
+          type: string
+          title: Display Name
+      type: object
+      required:
+      - id
+      - display_name
+      title: DecidedBy
     EntryCreate:
       properties:
         location_id:
@@ -9050,6 +9683,161 @@ components:
       - contact_identity_id
       - duplicate
       title: InboundReceipt
+    InboxItem:
+      properties:
+        source:
+          type: string
+          enum:
+          - agent_proposal
+          - appointment_proposal
+          title: Source
+        id:
+          type: integer
+          title: Id
+        kind:
+          type: string
+          enum:
+          - collection_reminder
+          - collection_follow_up
+          - appointment_booking
+          title: Kind
+        agent_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Key
+        status:
+          type: string
+          enum:
+          - pending
+          - approved
+          - executed
+          - failed
+          - declined
+          - expired
+          - superseded
+          title: Status
+        location_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Location Id
+        summary:
+          type: string
+          title: Summary
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+        facts:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Facts
+        evidence:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Evidence
+        payload:
+          additionalProperties: true
+          type: object
+          title: Payload
+        payload_hash:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Payload Hash
+        subject:
+          anyOf:
+          - $ref: '#/components/schemas/SubjectRef'
+          - type: 'null'
+        conversation_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Conversation Id
+        confirmation_token:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Confirmation Token
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        decided_by:
+          anyOf:
+          - $ref: '#/components/schemas/DecidedBy'
+          - type: 'null'
+        result_ref:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Result Ref
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Code
+        actions:
+          items:
+            type: string
+            enum:
+            - approve
+            - decline
+          type: array
+          title: Actions
+      type: object
+      required:
+      - source
+      - id
+      - kind
+      - agent_key
+      - status
+      - location_id
+      - summary
+      - reason
+      - facts
+      - evidence
+      - payload
+      - payload_hash
+      - subject
+      - conversation_id
+      - confirmation_token
+      - expires_at
+      - created_at
+      - decided_by
+      - result_ref
+      - error_code
+      - actions
+      title: InboxItem
+    InboxPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/InboxItem'
+          type: array
+          title: Items
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      type: object
+      required:
+      - items
+      - next_cursor
+      title: InboxPage
     LeadCreate:
       properties:
         full_name:
@@ -9788,6 +10576,70 @@ components:
       - kind
       - is_active
       title: ProductRead
+    ProposalApprove:
+      properties:
+        payload_hash:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          title: Payload Hash
+        note:
+          anyOf:
+          - type: string
+            maxLength: 500
+            minLength: 1
+          - type: 'null'
+          title: Note
+      additionalProperties: false
+      type: object
+      required:
+      - payload_hash
+      title: ProposalApprove
+    ProposalCreate:
+      properties:
+        kind:
+          type: string
+          enum:
+          - collection_reminder
+          - collection_follow_up
+          title: Kind
+        payload:
+          additionalProperties: true
+          type: object
+          title: Payload
+        reason:
+          type: string
+          maxLength: 500
+          minLength: 1
+          title: Reason
+        evidence:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Evidence
+      additionalProperties: false
+      type: object
+      required:
+      - kind
+      - payload
+      - reason
+      title: ProposalCreate
+      description: 'What an agent proposes. ``agent_key``, hash, version, TTL, location
+        and
+
+        dedupe key are server-computed, so any other field is rejected.'
+    ProposalDecline:
+      properties:
+        note:
+          anyOf:
+          - type: string
+            maxLength: 500
+            minLength: 1
+          - type: 'null'
+          title: Note
+      additionalProperties: false
+      type: object
+      title: ProposalDecline
     ReorderPointRead:
       properties:
         id:
@@ -10204,6 +11056,19 @@ components:
       - start
       - end
       title: SlotResult
+    SubjectRef:
+      properties:
+        type:
+          type: string
+          title: Type
+        id:
+          type: string
+          title: Id
+      type: object
+      required:
+      - type
+      - id
+      title: SubjectRef
     TransferCreate:
       properties:
         origin_location_id:
