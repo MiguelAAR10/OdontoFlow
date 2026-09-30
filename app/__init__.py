@@ -2,6 +2,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent_tools.router import router as agent_tools_router
+from app.agents_runtime.router import router as agent_runs_router
 from app.catalog.router import router as catalog_router
 from app.config import get_settings
 from app.context import require_authenticated_context
@@ -74,8 +75,10 @@ def create_app() -> FastAPI:
     # anonymous compatibility path; only ``/health`` is public.
     # IDN: ``GET /me`` (iam_router) is on the same boundary.
     # B2: agent proposals and the approval inbox (``/agent/*``) too.
+    # COB: agent runs (``/agent-runs``) too.
     authenticated = [Depends(require_authenticated_context)]
     for business_router in (
+        agent_runs_router,
         agent_tools_router,
         catalog_router,
         clinical_router,

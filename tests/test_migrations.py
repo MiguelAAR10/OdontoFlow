@@ -65,9 +65,11 @@ EXPECTED_TABLES = {
     "waitlist_entries",
     # B2 — generic agent proposals (migration 0021).
     "agent_proposals",
+    # COB — agent runs (migration 0022).
+    "agent_runs",
 }
 
-HEAD_REVISION = "0021"
+HEAD_REVISION = "0022"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (
@@ -699,6 +701,80 @@ def test_migration_0021_round_trip_and_checks():
         assert "agent_proposals" not in tables and codes == set()
         command.upgrade(config, "0021")
         assert "agent_proposals" in _b2_state(engine)[0]
+    finally:
+        engine.dispose()
+        _b2_drop(url)
+
+
+# --- COB: migration 0022 (agent_runs) on a disposable database ---------------
+
+
+def _cob_insert(conn, **overrides):
+    row = {
+        "agent_key": "cobranza",
+        "trigger": "manual",
+        "status": "running",
+        "candidates": 0,
+        "proposed": 0,
+        "deduped": 0,
+        "skipped": 0,
+        "error": None,
+        "finished": None,
+    }
+    row.update(overrides)
+    conn.execute(
+        text(
+            "INSERT INTO agent_runs (organization_id, agent_key, trigger, status, "
+            "triggered_by_principal_id, candidates_count, proposed_count, deduped_count, "
+            "skipped_count, error_category, finished_at) VALUES (1, :agent_key, :trigger, "
+            ":status, 1, :candidates, :proposed, :deduped, :skipped, :error, "
+            "CASE WHEN :finished THEN now() ELSE NULL END)"
+        ),
+        {**row, "finished": bool(row["finished"])},
+    )
+
+
+def test_migration_0022_round_trip_and_checks():
+    from sqlalchemy.exc import IntegrityError
+
+    url = _b2_disposable_url()
+    config = _alembic_config(url)
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "0021")
+        assert "agent_runs" not in _b2_state(engine)[0]
+
+        command.upgrade(config, "0022")
+        assert "agent_runs" in _b2_state(engine)[0]
+        with engine.begin() as conn:
+            _cob_insert(conn)  # the system principal (id 1) is a member of org 1
+            _cob_insert(
+                conn, status="completed", finished=True, candidates=3, proposed=1,
+                deduped=1, skipped=1,
+            )
+            _cob_insert(conn, status="failed", finished=True, error="unexpected")
+        bad_rows = (
+            {"status": "paused"},
+            {"trigger": "cron"},
+            {"agent_key": "inventario"},
+            {"status": "completed", "finished": True, "candidates": 2, "proposed": 1},
+            {"status": "completed"},  # finished_at is required once not running
+            {"status": "running", "finished": True},
+            {"status": "failed", "finished": True},  # failed needs an error_category
+            {"status": "completed", "finished": True, "error": "unexpected"},
+            {"skipped": -1},
+        )
+        for bad in bad_rows:
+            with pytest.raises(IntegrityError):
+                with engine.begin() as conn:
+                    _cob_insert(conn, **bad)
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM agent_runs"))
+
+        command.downgrade(config, "0021")
+        assert "agent_runs" not in _b2_state(engine)[0]
+        command.upgrade(config, "0022")
+        assert "agent_runs" in _b2_state(engine)[0]
     finally:
         engine.dispose()
         _b2_drop(url)

@@ -1,5 +1,34 @@
 # OdontoFlow Changelog
 
+## COB — Collections agent: deterministic sweep, "run now", reminder proposals (2026-10-01)
+
+- Migration `0022_agent_runs` (head `0022`): table `agent_runs` (closed
+  `agent_key`/`trigger`/`status` CHECKs, running ⇔ no `finished_at`, failed ⇔
+  `error_category`, completed ⇒ proposed+deduped+skipped = candidates,
+  `triggered_by` composite FK into `memberships`). No new permission codes.
+- `app/agents_runtime/`: `POST /agent-runs {agent_key:"cobranza"}` runs the
+  sweep synchronously. One org-scoped SQL selects charges with a net-of-reversals
+  balance and local age ≥ 7 days; a fixed Spanish template drafts the reminder
+  (no LLM); each candidate becomes at most one `collection_reminder` proposal
+  (`agent_key='cobranza'`, evidence with amount, balance, `days_since_issued`,
+  last payment). A charge already proposed today counts as `deduped`; no
+  reachable conversation / paid meanwhile counts as `skipped`; any other error
+  fails the run. The agent never approves or executes. `GET /agent-runs`
+  (`proposals.read`) lists runs newest first.
+- Receipt settles in tx1: a same-key replay returns the run as it is now
+  (even `failed`) and never sweeps again; retry a failed run with a new key.
+- Kill switch `AGENT_COBRANZA_ENABLED=false` → 409 `AGENT_DISABLED`
+  (`reason=disabled`); a human trigger without an active, permitted
+  `airy-cobranza` member in the org → 409 `reason=not_provisioned`.
+- **Deviation from the card:** the human trigger gate is `proposals.decide` +
+  `charges.read`, so **secretaria can trigger runs too**, not only the admin.
+  Kept on purpose: a run only proposes, approval stays human. Admin-only needs
+  a new `agent_runs.execute` code (follow-up).
+- `create_proposal` gains a server-only `agent_key` keyword (never from a body).
+- `scripts/seed_demo.py`: a sandbox conversation for the S/ 180 patient only and
+  the `airy-cobranza` agent principal (`collections-agent`, no credential).
+- Regenerated `docs/api/openapi.json`/`openapi.yaml` (2 new routes, additive).
+
 ## B2 — Agent proposals, approval inbox, approve/decline (2026-10-01)
 
 - Migration `0021_agent_proposals` (head `0021`): table `agent_proposals`

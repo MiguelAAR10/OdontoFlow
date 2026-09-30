@@ -12,7 +12,10 @@ services with the explicit ``system`` execution context:
 * consumable/resale products whose stock is low in Lince and ample in
   Jesús María (the demo transfers between them), with reorder points that
   make the low one show in ``GET /inventory/low-stock`` (B0.5);
-* three ``open`` waitlist entries for "Limpieza dental" (B0.5).
+* three ``open`` waitlist entries for "Limpieza dental" (B0.5);
+* COB: a sandbox WhatsApp conversation for the S/ 180 patient only (so the
+  collections run proposes exactly one reminder) and the ``airy-cobranza``
+  agent principal with profile ``collections-agent`` (no credential).
 
 Dates. Every date is an offset from one *anchor* day: ``--anchor-date`` or, by
 default, today in America/Lima. Offsets, hours, names and amounts come from
@@ -25,8 +28,9 @@ of rows that already exist.
 
 Historical instants (visit start, execution, charge, payment) are owned by the
 domain services and default to *now*; the seed backdates them once, right
-after creating each row, so the demo has a real history. That backdating and
-the appointment→patient link are the only direct ORM writes.
+after creating each row, so the demo has a real history. That backdating,
+the appointment→patient link and the COB sandbox conversation rows are the only
+direct ORM writes.
 
     python scripts/seed_demo.py                         # DATABASE_URL, local only
     python scripts/seed_demo.py --anchor-date 2026-10-01
@@ -80,6 +84,7 @@ from app.inventory.models import InventoryMovement  # noqa: E402
 from app.inventory.models import ReorderPoint  # noqa: E402
 from app.inventory.schemas import EntryCreate, ReorderPointUpsert  # noqa: E402
 from app.inventory.service import register_entry, upsert_reorder_point  # noqa: E402
+from app.messaging.models import ChannelAccount, ContactIdentity, Conversation  # noqa: E402
 from app.organization.models import Location, Practitioner  # noqa: E402
 from app.scheduling.models import Appointment  # noqa: E402
 from app.scheduling.service import book_appointment  # noqa: E402
@@ -196,6 +201,13 @@ WAITLIST_ROWS = (
     (32, MAGDALENA, "any"),
 )
 WAITLIST_SERVICE = "Limpieza dental"
+#: COB: only this patient (``KEY_PAST_VISITS[0]``, the S/ 180 · 12-day charge)
+#: gets a reachable conversation, so one collections run proposes exactly one
+#: reminder. Same sandbox account as ``scripts/bootstrap_openrouter_local.py``.
+COLLECTIONS_PATIENT_INDEX = 0
+SANDBOX_CHANNEL_EXTERNAL_ID = "sandbox-local"
+COBRANZA_AGENT_NAME = "airy-cobranza"
+COBRANZA_AGENT_PROFILE = "collections-agent"
 
 
 def default_anchor() -> date:
@@ -543,6 +555,80 @@ def _seed_waitlist(
             )
 
 
+def _seed_collections(session: Session, *, organization_id: int, patients: list[dict]) -> None:
+    """COB: one reachable sandbox conversation and the collections proposer."""
+    row = patients[COLLECTIONS_PATIENT_INDEX]
+    patient = session.scalar(
+        select(Patient).where(Patient.organization_id == organization_id, Patient.dni == row["dni"])
+    )
+    channel = session.scalar(
+        select(ChannelAccount).where(
+            ChannelAccount.organization_id == organization_id,
+            ChannelAccount.provider == "sandbox",
+            ChannelAccount.external_account_id == SANDBOX_CHANNEL_EXTERNAL_ID,
+        )
+    )
+    if channel is None:
+        channel = ChannelAccount(
+            organization_id=organization_id,
+            provider="sandbox",
+            external_account_id=SANDBOX_CHANNEL_EXTERNAL_ID,
+            phone_number_id=None,
+            display_name="OdontoFlow local sandbox",
+            is_active=True,
+        )
+        session.add(channel)
+        session.flush()
+    external_contact_id = row["phone"].lstrip("+")
+    contact = session.scalar(
+        select(ContactIdentity).where(
+            ContactIdentity.organization_id == organization_id,
+            ContactIdentity.channel_account_id == channel.id,
+            ContactIdentity.external_contact_id == external_contact_id,
+        )
+    )
+    if contact is None:
+        contact = ContactIdentity(
+            organization_id=organization_id,
+            channel_account_id=channel.id,
+            external_contact_id=external_contact_id,
+            normalized_phone_e164=row["phone"],
+            patient_id=patient.id,
+            consent_status="opted_in",
+        )
+        session.add(contact)
+        session.flush()
+    has_conversation = session.scalar(
+        select(Conversation.id).where(
+            Conversation.organization_id == organization_id,
+            Conversation.contact_identity_id == contact.id,
+        )
+    )
+    if has_conversation is None:
+        session.add(
+            Conversation(
+                organization_id=organization_id,
+                channel_account_id=channel.id,
+                contact_identity_id=contact.id,
+                status="open",
+                last_message_at=datetime.now(timezone.utc),
+            )
+        )
+    agent = _resolve_principal(
+        session,
+        organization_id=organization_id,
+        name=COBRANZA_AGENT_NAME,
+        principal_type="agent",
+    )
+    _assign_profile(
+        session,
+        organization_id=organization_id,
+        principal_id=agent.id,
+        profile=COBRANZA_AGENT_PROFILE,
+    )
+    session.commit()
+
+
 def _summary(session: Session, organization_id: int, anchor: date) -> dict[str, int]:
     def count(model) -> int:
         return session.scalar(
@@ -655,6 +741,7 @@ def seed_demo(
         session, ctx, anchor=anchor, locations=locations, services=services, patients=patients
     )
     session.commit()
+    _seed_collections(session, organization_id=organization_id, patients=patients)
     return _summary(session, organization_id, anchor)
 
 

@@ -1057,6 +1057,8 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
         "waitlist_entries",
         # B2 — generic agent proposals (migration 0021).
         "agent_proposals",
+        # COB — agent runs (migration 0022).
+        "agent_runs",
     }
     nullable_by_table = dict(rows)
     assert {

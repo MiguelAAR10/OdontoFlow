@@ -168,8 +168,13 @@ def create_proposal(
     reason: str,
     evidence: dict | None = None,
     idempotency: IdempotencyClaim | None = None,
+    agent_key: str | None = None,
 ) -> tuple[AgentProposal, bool]:
-    """Create (``True``) or dedupe onto the open proposal (``False``)."""
+    """Create (``True``) or dedupe onto the open proposal (``False``).
+
+    ``agent_key`` is a server-only override (COB's sweep passes ``"cobranza"``);
+    ``submit_proposal`` never passes it, so an HTTP body can never set it.
+    """
     spec = KINDS[kind]
     org = ctx.organization_id
     try:
@@ -178,7 +183,7 @@ def create_proposal(
             if ctx.principal_type not in PROPOSER_TYPES:
                 raise _deny()
             require_permission(session, ctx, PROPOSALS_CREATE)
-            agent_key = resolve_agent_key(session, ctx) or session.scalar(
+            agent_key = agent_key or resolve_agent_key(session, ctx) or session.scalar(
                 select(Principal.display_name).where(Principal.id == ctx.principal_id)
             )
             subject = spec.subject(session, org, args)
