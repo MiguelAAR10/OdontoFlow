@@ -200,7 +200,9 @@ def _scenario_model(
                     )
                 elif last_tool == "confirm_appointment":
                     result = self._decode_tool_message(tool_messages[-1]) or {}
-                    if result.get("status") == "error":
+                    # B0: confirm_appointment is not in the model tool list, so
+                    # the runtime answers with a non-JSON "invalid tool" error.
+                    if result.get("status") != "success":
                         message = self._response(
                             "Quedo pendiente de una confirmación posterior.", "proposed"
                         )
@@ -228,7 +230,9 @@ def _scenario_model(
                     )
                 elif last_tool == "confirm_appointment":
                     result = self._decode_tool_message(tool_messages[-1]) or {}
-                    if result.get("status") == "error":
+                    # B0: confirm_appointment is not in the model tool list, so
+                    # the runtime answers with a non-JSON "invalid tool" error.
+                    if result.get("status") != "success":
                         message = self._response(
                             "Quedo pendiente de una confirmación posterior.", "proposed"
                         )
@@ -339,7 +343,9 @@ def _scenario_model(
                     )
                 else:
                     result = self._decode_tool_message(tool_messages[-1]) or {}
-                    if result.get("status") == "error":
+                    # B0: confirm_appointment is not in the model tool list, so
+                    # the runtime answers with a non-JSON "invalid tool" error.
+                    if result.get("status") != "success":
                         message = self._response(
                             "Quedo pendiente de una confirmación posterior.", "proposed"
                         )
@@ -741,10 +747,11 @@ def test_wf01_three_turn_loop_persists_once_and_keeps_threads_isolated(
             "list_locations",
             "query_available_slots",
             "propose_appointment",
-            "confirm_appointment",
             "request_human_handoff",
         }
     )
+    # B0: the model only proposes; its confirmation attempt never reaches the backend.
+    assert "confirm_appointment" not in tool_calls
     assert not {"propose_cancellation", "propose_reschedule"}.intersection(tool_calls)
 
     assert len(state_a.values["messages"]) > 0
@@ -874,7 +881,8 @@ def test_wf01_rejects_same_turn_model_propose_then_confirm(
         if path == "/agent-tools/call"
     ]
     assert "propose_appointment" in tool_calls
-    assert "confirm_appointment" in tool_calls
+    # B0: the model's same-turn confirm is refused before the backend gateway.
+    assert "confirm_appointment" not in tool_calls
     session.expire_all()
     assert session.execute(text("SELECT count(*) FROM messages WHERE direction = 'inbound'")).scalar_one() == 1
     assert session.execute(text("SELECT count(*) FROM appointments")).scalar_one() == 0
@@ -890,12 +898,10 @@ def test_wf01_rejects_same_turn_model_propose_then_confirm(
                 "SELECT count(*) FROM audit_events "
                 "WHERE entity_type = 'agent_tool' "
                 "AND action = 'agent_tool.called' "
-                "AND after_state->>'tool_name' = 'confirm_appointment' "
-                "AND after_state->>'status' = 'error' "
-                "AND after_state->>'error_code' = 'INVALID_INPUT'"
+                "AND after_state->>'tool_name' = 'confirm_appointment'"
             )
         ).scalar_one()
-        == 1
+        == 0
     )
 
 
@@ -990,7 +996,8 @@ def test_wf01_rejects_negative_later_message_before_booking(
         for path, payload in recording_backend.calls
         if path == "/agent-tools/call"
     ]
-    assert "confirm_appointment" in tool_calls
+    # B0: the forced confirm is refused by the agent runtime, not the backend.
+    assert "confirm_appointment" not in tool_calls
     session.expire_all()
     persisted_negative = session.execute(
         text("SELECT body_text FROM messages WHERE provider_message_id = 'negative-3'")
@@ -1004,9 +1011,7 @@ def test_wf01_rejects_negative_later_message_before_booking(
             "SELECT count(*) FROM audit_events "
             "WHERE entity_type = 'agent_tool' "
             "AND action = 'agent_tool.called' "
-            "AND after_state->>'tool_name' = 'confirm_appointment' "
-            "AND after_state->>'status' = 'error' "
-            "AND after_state->>'error_code' = 'INVALID_INPUT'"
+            "AND after_state->>'tool_name' = 'confirm_appointment'"
         )
     ).scalar_one()
     assert persisted_negative == "No, thanks"
@@ -1015,7 +1020,7 @@ def test_wf01_rejects_negative_later_message_before_booking(
         appointment_count,
         pending_proposal_count,
         confirmation_error_count,
-    ) == ("proposed", 0, 1, 1)
+    ) == ("proposed", 0, 1, 0)
 
 
 def test_wf01_handoff_blocks_agent_tool_automation(

@@ -33,7 +33,6 @@ V0_TOOL_NAMES = {
     "list_locations",
     "query_available_slots",
     "propose_appointment",
-    "confirm_appointment",
     "request_human_handoff",
 }
 
@@ -94,7 +93,7 @@ assert create_sales_agent_app is not None
     importlib.util.find_spec("langchain") is None,
     reason="W3 runtime tests run in the optional sales-agent dependency job",
 )
-def test_only_the_seven_v0_tools_are_exposed() -> None:
+def test_only_the_six_v0_tools_are_exposed() -> None:
     from sales_agent.gateway import BackendGateway
     from sales_agent.tools import build_v0_tools
 
@@ -102,11 +101,72 @@ def test_only_the_seven_v0_tools_are_exposed() -> None:
     tools = build_v0_tools(gateway, conversation_id=17)
 
     assert {item.name for item in tools} == V0_TOOL_NAMES
-    assert len(tools) == 7
+    assert len(tools) == 6
     assert not {"get_contact_profile", "propose_cancellation", "propose_reschedule"}.intersection(
         item.name for item in tools
     )
     assert all("Args:" in (item.description or "") for item in tools)
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("langchain") is None,
+    reason="W3 runtime tests run in the optional sales-agent dependency job",
+)
+def test_the_model_cannot_confirm_appointments() -> None:
+    """B0: the agent only proposes; staff confirm through the human route.
+
+    ``confirm_appointment`` is absent from the model's tool list, and the
+    Sales Agent gateway refuses to send it even if a caller asks directly —
+    before any HTTP request is made.
+    """
+    from sales_agent.gateway import BackendGateway
+    from sales_agent.schemas import MUTATION_TOOL_NAMES, V0_TOOL_NAMES as SCHEMA_TOOLS
+    from sales_agent.tools import build_v0_tools
+
+    requests: list[httpx.Request] = []
+    transport = httpx.MockTransport(lambda request: requests.append(request) or httpx.Response(500))
+    client = httpx.Client(base_url="http://backend.test", transport=transport)
+    gateway = BackendGateway("http://backend.test", "ofk_test", http_client=client)
+
+    assert "confirm_appointment" not in {item.name for item in build_v0_tools(gateway, conversation_id=17)}
+    assert "confirm_appointment" not in SCHEMA_TOOLS
+    assert "confirm_appointment" not in MUTATION_TOOL_NAMES
+    with pytest.raises(ValueError):
+        gateway.call_tool(
+            "confirm_appointment",
+            conversation_id=17,
+            arguments={"proposal_id": 1, "confirmation_token": str(UUID(int=1))},
+        )
+    assert requests == []
+
+
+def test_agent_tool_request_rejects_confirm_appointment() -> None:
+    from pydantic import ValidationError
+
+    from sales_agent.schemas import AgentToolRequest
+
+    with pytest.raises(ValidationError):
+        AgentToolRequest(
+            tool_version="1.1",
+            tool_name="confirm_appointment",
+            conversation_id=1,
+            request_id=UUID(int=1),
+            correlation_id=UUID(int=2),
+            idempotency_key=UUID("6f1c2b8e-4b1a-4c1e-9a1a-1a1a1a1a1a1a"),
+            arguments={},
+        )
+
+
+def test_system_prompt_is_peruvian_spanish_and_propose_only() -> None:
+    from sales_agent.runtime import SYSTEM_PROMPT
+
+    assert "You are" not in SYSTEM_PROMPT
+    assert "request_human_handoff" in SYSTEM_PROMPT
+    assert "propose_appointment" in SYSTEM_PROMPT
+    assert "confirm_appointment" not in SYSTEM_PROMPT
+    lowered = SYSTEM_PROMPT.lower()
+    for phrase in ("eres", "sede", "precio", "personal", "confirma"):
+        assert phrase in lowered, phrase
 
 
 @pytest.mark.skipif(

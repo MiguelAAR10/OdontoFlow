@@ -78,6 +78,42 @@ def migrated_engine():
     engine.dispose()
 
 
+#: Environment variables that change application or agent behaviour. A shell
+#: that sourced ``.env.local`` (direnv, ``scripts/dev_up.sh``) must not leak
+#: them into tests: every test starts from code defaults and sets what it
+#: needs with ``monkeypatch``. ``TEST_DATABASE_URL`` and ``DATABASE_URL`` are
+#: deliberately kept — they select *where* tests run, not *how* the app behaves.
+BEHAVIOUR_ENV_VARS = (
+    "APP_ENV",
+    "ERP_ANONYMOUS_COMPAT",
+    "INTEGRATION_API_ENABLED",
+    "CORS_ALLOWED_ORIGINS",
+    "REQUIRE_HTTPS",
+    "MAX_JSON_BODY_BYTES",
+    "MESSAGE_CONTENT_RETENTION_DAYS",
+    "TRUSTED_PROXY_IPS",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+)
+BEHAVIOUR_ENV_PREFIXES = ("RATE_LIMIT_", "SALES_AGENT_", "SANDBOX_")
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch):
+    """Strip behaviour-changing variables inherited from the developer shell.
+
+    ``get_settings`` and ``AgentSettings.from_env`` read ``os.environ`` on
+    every call (no cache), so removing the variables is enough. The session
+    fixture ``migrated_engine`` only uses ``TEST_DATABASE_URL``, which is kept.
+    """
+    for name in BEHAVIOUR_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    for name in list(os.environ):
+        if name.startswith(BEHAVIOUR_ENV_PREFIXES):
+            monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def clean_tables(migrated_engine):
     yield

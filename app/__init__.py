@@ -64,18 +64,12 @@ def create_app() -> FastAPI:
     # ``scheduling_router`` proposal routes that call it directly for their
     # human-only gate — simply reuses it instead of authenticating twice.
     #
-    # Economics and inventory remain on the unmodified compatibility path:
-    # they are unrelated legacy ERP surfaces this card does not close.
+    #
+    # B0: economics (charges, payments, follow-ups, products, consumptions)
+    # and inventory (entries, adjustments, transfers, kardex, balance) are on
+    # the same authenticated boundary. No business router is left on the
+    # anonymous compatibility path; only ``/health`` is public.
     authenticated = [Depends(require_authenticated_context)]
-    authenticated_routers = (
-        agent_tools_router,
-        catalog_router,
-        clinical_router,
-        commercial_router,
-        messaging_router,
-        organization_router,
-        scheduling_router,
-    )
     for business_router in (
         agent_tools_router,
         catalog_router,
@@ -87,8 +81,7 @@ def create_app() -> FastAPI:
         organization_router,
         scheduling_router,
     ):
-        dependencies = authenticated if business_router in authenticated_routers else []
-        app.include_router(business_router, dependencies=dependencies)
+        app.include_router(business_router, dependencies=authenticated)
 
     install_security_openapi(app)
 

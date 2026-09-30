@@ -285,16 +285,16 @@ def test_sandbox_input_reaches_agent_and_delivers_one_safe_response(
             "WHERE action = 'outbound.sandbox.received'"
         )
     ).scalar_one() == 1
+    # B0: confirm_appointment is not in the model's tool list, so the model's
+    # same-turn confirmation attempt never reaches the backend gateway.
     assert session.execute(
         text(
             "SELECT count(*) FROM audit_events "
             "WHERE entity_type = 'agent_tool' "
             "AND action = 'agent_tool.called' "
-            "AND after_state->>'tool_name' = 'confirm_appointment' "
-            "AND after_state->>'status' = 'error' "
-            "AND after_state->>'error_code' = 'INVALID_INPUT'"
+            "AND after_state->>'tool_name' = 'confirm_appointment'"
         )
-    ).scalar_one() == 1
+    ).scalar_one() == 0
     assert [path for path, _payload in backend_client.calls].count(
         "/internal/messages/inbound"
     ) == 2

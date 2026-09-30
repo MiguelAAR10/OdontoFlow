@@ -3404,6 +3404,11 @@
       "post": {
         "summary": "Create Product Route",
         "operationId": "create_product_route_products_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3630,6 +3635,11 @@
       "get": {
         "summary": "List Products Route",
         "operationId": "list_products_route_products_get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "search",
@@ -3858,6 +3868,11 @@
       "get": {
         "summary": "Get Product Route",
         "operationId": "get_product_route_products__product_id__get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "product_id",
@@ -4059,6 +4074,11 @@
       "post": {
         "summary": "Create Service Consumption Route",
         "operationId": "create_service_consumption_route_executions__execution_id__consumptions_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "execution_id",
@@ -4294,6 +4314,11 @@
       "get": {
         "summary": "List Service Consumptions Route",
         "operationId": "list_service_consumptions_route_executions__execution_id__consumptions_get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "execution_id",
@@ -4499,6 +4524,11 @@
       "post": {
         "summary": "Create Charge Route",
         "operationId": "create_charge_route_executions__execution_id__charges_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "execution_id",
@@ -4736,6 +4766,11 @@
       "get": {
         "summary": "List Charges Route",
         "operationId": "list_charges_route_charges_get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "execution_id",
@@ -5055,6 +5090,11 @@
       "get": {
         "summary": "Get Charge Route",
         "operationId": "get_charge_route_charges__charge_id__get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "charge_id",
@@ -5256,6 +5296,11 @@
       "post": {
         "summary": "Create Payment Route",
         "operationId": "create_payment_route_charges__charge_id__payments_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "charge_id",
@@ -5491,6 +5536,11 @@
       "get": {
         "summary": "List Payments Route",
         "operationId": "list_payments_route_charges__charge_id__payments_get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "charge_id",
@@ -5696,6 +5746,11 @@
       "get": {
         "summary": "List All Payments Route",
         "operationId": "list_all_payments_route_payments_get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "charge_id",
@@ -5990,6 +6045,11 @@
       "post": {
         "summary": "Verify Payment Route",
         "operationId": "verify_payment_route_payments__payment_id__verify_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "payment_id",
@@ -6227,6 +6287,11 @@
       "post": {
         "summary": "Open Follow Up Route",
         "operationId": "open_follow_up_route_charges__charge_id__follow_ups_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "charge_id",
@@ -6462,6 +6527,11 @@
       "get": {
         "summary": "List Charge Follow Ups Route",
         "operationId": "list_charge_follow_ups_route_charges__charge_id__follow_ups_get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "charge_id",
@@ -6667,6 +6737,11 @@
       "get": {
         "summary": "List Follow Ups Route",
         "operationId": "list_follow_ups_route_follow_ups_get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "state",
@@ -6948,6 +7023,11 @@
       "post": {
         "summary": "Reschedule Follow Up Route",
         "operationId": "reschedule_follow_up_route_follow_ups__follow_up_id__reschedule_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "follow_up_id",
@@ -7185,6 +7265,11 @@
       "post": {
         "summary": "Close Follow Up Route",
         "operationId": "close_follow_up_route_follow_ups__follow_up_id__close_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "follow_up_id",
@@ -7422,6 +7507,11 @@
       "post": {
         "summary": "Register Entry Route",
         "operationId": "register_entry_route_products__product_id__entries_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "product_id",
@@ -7659,6 +7749,11 @@
       "post": {
         "summary": "Register Adjustment Route",
         "operationId": "register_adjustment_route_products__product_id__adjustments_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "product_id",
@@ -7896,6 +7991,11 @@
       "post": {
         "summary": "Register Transfer Route",
         "operationId": "register_transfer_route_products__product_id__transfers_post",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "product_id",
@@ -8133,6 +8233,11 @@
       "get": {
         "summary": "List Movements Route",
         "operationId": "list_movements_route_products__product_id__movements_get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "product_id",
@@ -8349,6 +8454,11 @@
       "get": {
         "summary": "Get Balance Route",
         "operationId": "get_balance_route_products__product_id__balance_get",
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "product_id",

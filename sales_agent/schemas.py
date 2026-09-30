@@ -14,7 +14,6 @@ AgentToolName = Literal[
     "list_locations",
     "query_available_slots",
     "propose_appointment",
-    "confirm_appointment",
     "request_human_handoff",
 ]
 
@@ -25,16 +24,15 @@ V0_TOOL_NAMES = frozenset(
         "list_locations",
         "query_available_slots",
         "propose_appointment",
-        "confirm_appointment",
         "request_human_handoff",
     }
 )
 READ_TOOL_NAMES = frozenset(
     {"get_reception_context", "list_services", "list_locations", "query_available_slots"}
 )
-MUTATION_TOOL_NAMES = frozenset(
-    {"propose_appointment", "confirm_appointment", "request_human_handoff"}
-)
+#: B0: ``confirm_appointment`` is deliberately absent. The agent only proposes;
+#: clinic staff confirm through the human route (``app/scheduling/router.py``).
+MUTATION_TOOL_NAMES = frozenset({"propose_appointment", "request_human_handoff"})
 
 
 class AgentToolRequest(BaseModel):

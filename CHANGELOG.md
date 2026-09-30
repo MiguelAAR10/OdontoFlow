@@ -1,5 +1,26 @@
 # OdontoFlow Changelog
 
+## B0 — Demo base: economics/inventory auth, agent proposes only, demo seed (2026-09-30)
+
+- Economics (charges, payments, follow-ups, products, consumptions) and
+  inventory (entries, adjustments, transfers, kardex, balance) now require
+  `require_authenticated_context` like every other business router; anonymous
+  callers get 401 even with `ERP_ANONYMOUS_COMPAT=true`. The route-walk test
+  is now behavioural (FastAPI 0.141 mounts included routers lazily, so the old
+  static walk checked nothing).
+- Tests strip behaviour-changing env vars inherited from a shell that sourced
+  `.env.local` (autouse `isolated_environment` fixture in `tests/conftest.py`).
+- Sales Agent: `confirm_appointment` is removed from the model's tool list and
+  the agent gateway allowlist (6 tools); the backend tool and the human
+  confirmation route are unchanged. `SYSTEM_PROMPT` is now Peruvian Spanish and
+  states that the agent only proposes and staff confirm.
+- New `scripts/seed_demo.py` (deterministic, idempotent, local-DB guard,
+  `--issue-staff-credential` → `.env.demo.local`, mode 0600), new
+  `reception-staff-demo` profile in `scripts/issue_credential.py`, new
+  `scripts/dev_up.sh`.
+- No schema or migration change. Regenerated `docs/api/openapi.json`/`openapi.yaml`
+  (additive `security: IntegrationBearer` on the 22 economics/inventory operations).
+
 ## AGENT-03 — Agent appointment mutations remain human-controlled (2026-09-22)
 
 - Reused the existing human-confirmation guard for cancellation and rescheduling

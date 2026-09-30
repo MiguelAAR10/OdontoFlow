@@ -1,10 +1,9 @@
-"""The seven and only seven Sales Agent V0 tools."""
+"""The six and only six Sales Agent V0 tools (the agent proposes, staff confirm)."""
 
 from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any, Literal
-from uuid import UUID
 
 from sales_agent.gateway import BackendGateway
 from sales_agent.schemas import AgentToolResult
@@ -16,7 +15,7 @@ def _tool_result(result: AgentToolResult) -> dict[str, Any]:
 
 
 def build_v0_tools(gateway: BackendGateway, *, conversation_id: int):
-    """Build exactly the seven conversation-bound V0 tool wrappers."""
+    """Build exactly the six conversation-bound V0 tool wrappers."""
     from langchain.tools import tool
 
     @tool("get_reception_context")
@@ -119,9 +118,9 @@ def build_v0_tools(gateway: BackendGateway, *, conversation_id: int):
     ) -> dict[str, Any]:
         """Create a pending appointment proposal for one exact returned slot.
 
-        This does not confirm or book the appointment. Call it only after a
-        contact has selected a slot returned by query_available_slots, and ask
-        for explicit confirmation before calling confirm_appointment.
+        This does not confirm or book the appointment: clinic staff confirm
+        pending proposals through the human reception route. Call it only after
+        a contact has selected a slot returned by query_available_slots.
 
         Args:
             full_name: Contact's name used by the canonical profile service.
@@ -142,29 +141,6 @@ def build_v0_tools(gateway: BackendGateway, *, conversation_id: int):
                 "propose_appointment",
                 conversation_id=conversation_id,
                 arguments=arguments,
-            )
-        )
-
-    @tool("confirm_appointment")
-    def confirm_appointment(proposal_id: int, confirmation_token: UUID) -> dict[str, Any]:
-        """Confirm a pending appointment proposal after explicit contact approval.
-
-        Call this only when the contact has clearly affirmed the exact pending
-        proposal. The canonical backend performs the final availability and
-        idempotency checks; this tool cannot cancel or reschedule appointments.
-
-        Args:
-            proposal_id: Canonical pending appointment proposal identifier.
-            confirmation_token: Exact confirmation token returned by the proposal.
-        """
-        return _tool_result(
-            gateway.call_tool(
-                "confirm_appointment",
-                conversation_id=conversation_id,
-                arguments={
-                    "proposal_id": proposal_id,
-                    "confirmation_token": confirmation_token,
-                },
             )
         )
 
@@ -209,7 +185,6 @@ def build_v0_tools(gateway: BackendGateway, *, conversation_id: int):
         list_locations,
         query_available_slots,
         propose_appointment,
-        confirm_appointment,
         request_human_handoff,
     )
 

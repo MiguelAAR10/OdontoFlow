@@ -8,11 +8,11 @@ rate limiting and audit provenance are one boundary, not isolated helpers.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
@@ -20,31 +20,14 @@ from sqlalchemy.orm import sessionmaker
 from conftest import AUTH_HEADERS
 from app import create_app
 from app.config import get_settings
-from app.context import require_authenticated_context
 from app.db import get_db
-from app.economics.router import router as economics_router
 from app.iam.credentials import issue_credential
 from app.iam.models import Membership, Principal, Role, RoleAssignment
-from app.inventory.router import router as inventory_router
 from app.tenancy import BOOTSTRAP_ORGANIZATION_ID
 
 ORG = BOOTSTRAP_ORGANIZATION_ID
 WINDOW_START = "2026-08-10T00:00:00Z"
 WINDOW_END = "2026-08-11T00:00:00Z"
-
-#: CORE-02 closed the ``ERP_ANONYMOUS_COMPAT`` fallback for every
-#: Lead-to-Appointment / Reception-Scheduling business route. Economics
-#: (billing) and inventory are unrelated legacy ERP surfaces this card
-#: deliberately left on the compatibility path — derived from the routers
-#: themselves rather than hardcoded so this stays accurate if either grows a
-#: route.
-UNPROTECTED_LEGACY_ERP_PATHS = {
-    route.path
-    for router in (economics_router, inventory_router)
-    for route in router.routes
-    if isinstance(route, APIRoute)
-}
-
 
 def _app_for(migrated_engine):
     app = create_app()
@@ -158,21 +141,33 @@ def test_integration_routes_deny_a_member_without_permissions(
     assert response.json()["error"]["code"] == "PERMISSION_DENIED"
 
 
-def test_only_protected_routes_have_the_authentication_dependency():
-    app = create_app()
-    public_paths = {"/health"}
-    documentation_paths = {app.docs_url, app.redoc_url, app.openapi_url}
+def test_every_business_operation_rejects_an_anonymous_caller(monkeypatch, migrated_engine):
+    """Walks the real OpenAPI surface and knocks on every operation anonymously.
 
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
-        if route.path in public_paths | documentation_paths:
-            continue
-        dependencies = {dependency.call for dependency in route.dependant.dependencies}
-        expects_authentication = route.path not in UNPROTECTED_LEGACY_ERP_PATHS
-        assert (
-            require_authenticated_context in dependencies
-        ) is expects_authentication, route.path
+    FastAPI 0.141 mounts included routers lazily, so ``app.routes`` no longer
+    lists their ``APIRoute`` objects — a static walk of dependencies silently
+    checks nothing. This behavioural walk cannot pass vacuously: it counts the
+    operations it exercised. ``ERP_ANONYMOUS_COMPAT`` is forced on to prove the
+    fallback opens no business route (economics and inventory included, B0).
+    """
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("ERP_ANONYMOUS_COMPAT", "true")
+    app = _app_for(migrated_engine)
+    schema = app.openapi()
+    exercised = 0
+    with TestClient(app, raise_server_exceptions=False) as client:
+        for path, path_item in schema["paths"].items():
+            if path == "/health":
+                continue
+            concrete = re.sub(r"\{[^}]+\}", "1", path)
+            for method in path_item:
+                if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                    continue
+                kwargs = {} if method.lower() == "get" else {"json": {}}
+                response = client.request(method.upper(), concrete, **kwargs)
+                assert response.status_code == 401, (method, path, response.text)
+                exercised += 1
+    assert exercised > 50, exercised
 
 
 def test_routers_cannot_reintroduce_the_system_default_identity():
@@ -196,17 +191,13 @@ def test_openapi_declares_bearer_authentication_on_business_operations():
     for path, path_item in schema["paths"].items():
         if path == "/health":
             continue
-        is_protected = path not in UNPROTECTED_LEGACY_ERP_PATHS
         for method, operation in path_item.items():
             if method.lower() not in {"get", "post", "put", "patch", "delete"}:
                 continue
-            if is_protected:
-                assert {"IntegrationBearer": []} in operation.get("security", []), (
-                    method,
-                    path,
-                )
-            else:
-                assert "security" not in operation, (method, path)
+            assert {"IntegrationBearer": []} in operation.get("security", []), (
+                method,
+                path,
+            )
             parameters = {
                 (parameter["in"], parameter["name"]): parameter
                 for parameter in operation.get("parameters", [])
@@ -334,12 +325,12 @@ def test_production_disables_interactive_docs_and_requires_https(monkeypatch, mi
     assert response.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
 
 
-def test_erp_anonymous_compat_defaults_on_in_development(monkeypatch, migrated_engine):
-    """``/products`` (economics) is the unrelated legacy ERP surface CORE-02
-    deliberately left on the compatibility path — see
-    ``UNPROTECTED_LEGACY_ERP_PATHS``. ``/services`` and the rest of the
-    Lead-to-Appointment surface no longer accept this fallback at all
-    (``test_core02_business_auth_boundary.py``).
+def test_erp_anonymous_compat_no_longer_opens_economics_or_inventory(
+    monkeypatch, migrated_engine
+):
+    """B0: economics and inventory joined the authenticated boundary. Even with
+    ``ERP_ANONYMOUS_COMPAT`` on (the development default), an anonymous caller
+    gets 401 there, exactly as on the Lead-to-Appointment surface.
     """
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.delenv("ERP_ANONYMOUS_COMPAT", raising=False)
@@ -350,6 +341,57 @@ def test_erp_anonymous_compat_defaults_on_in_development(monkeypatch, migrated_e
         base_url="https://testserver",
     ) as client:
         response = client.get("/products")
+    assert response.status_code == 401, response.text
+    assert response.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", "/charges"),
+        ("get", "/payments"),
+        ("get", "/products"),
+        ("get", "/products/1/movements"),
+        ("get", "/products/1/balance"),
+        ("post", "/products/1/entries"),
+        ("post", "/products/1/transfers"),
+        ("post", "/executions/1/charges"),
+    ],
+)
+def test_economics_and_inventory_require_a_credential(migrated_engine, method, path):
+    with TestClient(_app_for(migrated_engine), raise_server_exceptions=False) as client:
+        kwargs = {"json": {}} if method == "post" else {}
+        response = getattr(client, method)(path, **kwargs)
+    assert response.status_code == 401, (method, path, response.text)
+    assert response.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
+
+
+@pytest.mark.parametrize("path", ["/charges", "/payments", "/products"])
+def test_economics_reads_succeed_with_a_credential(migrated_engine, path):
+    with TestClient(_app_for(migrated_engine), raise_server_exceptions=False) as client:
+        response = client.get(path, headers=AUTH_HEADERS)
+    assert response.status_code == 200, (path, response.text)
+
+
+def test_inventory_movements_succeed_with_a_credential(migrated_engine):
+    with TestClient(_app_for(migrated_engine), raise_server_exceptions=False) as client:
+        product = client.post(
+            "/products",
+            json={"name": "Guantes", "unit": "caja", "kind": "consumible"},
+            headers=AUTH_HEADERS,
+        )
+        assert product.status_code == 201, product.text
+        location = client.post(
+            "/locations",
+            json={"name": "Sede B0", "timezone": "America/Lima"},
+            headers=AUTH_HEADERS,
+        )
+        assert location.status_code == 201, location.text
+        response = client.get(
+            f"/products/{product.json()['id']}/movements",
+            params={"location_id": location.json()["id"]},
+            headers=AUTH_HEADERS,
+        )
     assert response.status_code == 200, response.text
 
 
