@@ -1,6 +1,7 @@
 """``agent_runs``: one row per agent sweep (COB) or reception turn (B3).
 
-Mirrors migrations ``0022`` and ``0023``.
+Mirrors migrations ``0022``, ``0023`` and ``0024`` (SELF: D-1 reminders,
+``agent_key='confirmaciones'``).
 """
 
 from __future__ import annotations
@@ -51,7 +52,8 @@ class AgentRun(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "agent_key IN ('cobranza', 'reception')", name="ck_agent_runs_agent_key"
+            "agent_key IN ('cobranza', 'reception', 'confirmaciones')",
+            name="ck_agent_runs_agent_key",
         ),
         CheckConstraint(
             "agent_key <> 'reception' OR (trigger = 'event' AND conversation_id IS NOT NULL "

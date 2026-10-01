@@ -1,5 +1,37 @@
 # OdontoFlow Changelog
 
+## SELF — Patient self-booking + D-1 reminders (2026-10-01)
+
+- `POST /public/bookings` (scheduling router, authenticated): the frontend BFF
+  (new integration-only profile `patient-booking`: services/locations/
+  practitioners/availability reads + `appointments.create`; `--type agent` is
+  refused) books a **confirmed** appointment for the patient (L3 by the
+  patient, no proposal). UUIDv4 `Idempotency-Key` per submit
+  (`public_booking.create` receipt, replay → `Idempotent-Replay: true`). One
+  transaction: past start → 422, per-phone advisory lock, lead resolved by
+  contact identity then lead phone (else a `direct` lead), rate limit 3 per
+  phone per 24 h counted by resolved lead OR phone → 429
+  `PUBLIC_BOOKING_RATE_LIMITED`, given practitioner's membership/capability
+  checked before the slot (404/409), off-grid/outside hours/blocked → 422,
+  taken → 409 `SLOT_BLOCKED`. Response carries `reference` (`OF-<id>`); audit
+  `appointment.created` + domain event `appointment.booked_by_patient` (ids
+  and times only).
+- `POST /agent-runs {agent_key:"confirmaciones"}`: human-only (agent/
+  integration → 403) with `appointments.read` + `deliveries.create`; kill
+  switch `AGENT_CONFIRMACIONES_ENABLED`. One SQL selects tomorrow's confirmed
+  appointments (location timezone) with their latest reachable conversation
+  (lead, patient or phone match; not opted out, not closed) and queues one
+  fixed-template reminder each as the caller; key derived from
+  `(org, appointment, start)` so a reschedule gets a new reminder and a rerun
+  dedupes. No conversation → `skipped`. A failed run's counts are not
+  authoritative (already-queued reminders stay; the rerun dedupes them).
+- Migration `0024_agent_runs_confirmaciones` (head `0024`): `agent_key` adds
+  `confirmaciones`. OpenAPI regenerated.
+- Known limits: exact E.164 matching (staff-typed leads without `+51` are not
+  matched); `POST /appointments` stays reachable by the BFF credential until a
+  `public_bookings.create` code lands; without OTP anyone knowing a phone with
+  an open conversation can trigger reminders to it (rate limited).
+
 ## B3 — Staff reads: chat, handoffs, activity feed, productivity, reception runs (2026-10-01)
 
 - Human-only staff reads (agents/integrations get 403 even when they hold the

@@ -1,7 +1,9 @@
 from datetime import datetime, time
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated, Literal
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 
 class AvailabilityRuleCreate(BaseModel):
@@ -152,3 +154,32 @@ class AppointmentProposalDecline(BaseModel):
 
     conversation_id: int
     confirmation_token: UUID
+
+
+# --- SELF: patient self-booking through the frontend BFF ---------------------
+
+
+class PublicBookingCreate(BaseModel):
+    """What a patient picks on the phone; duration, end, state and lead are server facts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    service_id: int
+    location_id: int
+    practitioner_id: int | None = None
+    start: AwareDatetime
+    full_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+    phone: Annotated[str, StringConstraints(pattern=r"^\+[1-9][0-9]{7,14}$")]
+
+
+class PublicBookingRead(BaseModel):
+    """The patient's receipt: a reference and the confirmed interval, no lead/patient ids."""
+
+    reference: str
+    appointment_id: int
+    state: Literal["confirmed"]
+    service_id: int
+    location_id: int
+    practitioner_id: int
+    start_utc: datetime
+    end_utc: datetime

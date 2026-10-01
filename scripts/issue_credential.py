@@ -131,6 +131,17 @@ PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     # ``proposals.decide`` nor the executors' permissions (a human approves).
     "collections-agent": (PROPOSALS_CREATE, PROPOSALS_READ, CHARGES_READ, FOLLOW_UPS_READ),
     "reception-operator": (CONVERSATIONS_READ, CONVERSATIONS_RESUME),
+    # SELF: the frontend BFF that lets a patient book from the phone. Catalog
+    # and slot reads plus ``POST /public/bookings``; no patient, charge, lead,
+    # appointment-list, conversation or delivery access. Integration only
+    # (``INTEGRATION_ONLY_PROFILES``): an agent must never confirm a booking.
+    "patient-booking": (
+        SERVICES_READ,
+        LOCATIONS_READ,
+        PRACTITIONERS_READ,
+        AVAILABILITY_READ,
+        APPOINTMENTS_CREATE,
+    ),
     # B0 demo: the clinic staff surface the frontend drives (agenda, patients,
     # attendance, billing, inventory). No conversation/agent permissions. It is
     # an ``integration`` principal until human sign-in lands (B2), so it cannot
@@ -262,8 +273,16 @@ def profile_role(profile: str) -> tuple[str, str, tuple[str, ...]]:
     return f"integration-{profile}", f"Integration: {profile}", PROFILE_PERMISSIONS[profile]
 
 
+#: SELF: profiles that only an ``integration`` principal may hold. The patient
+#: is the confirming party behind ``patient-booking``; an agent holding it would
+#: skip the L3 confirmation that ``contact_appointments.book`` enforces.
+INTEGRATION_ONLY_PROFILES = frozenset({"patient-booking"})
+
+
 def profile_matches_type(profile: str, principal_type: str) -> bool:
     """A human profile only for ``human``; an integration profile never for ``human``."""
+    if profile in INTEGRATION_ONLY_PROFILES:
+        return principal_type == "integration"
     return (profile in HUMAN_PROFILE_PERMISSIONS) == (principal_type == "human")
 
 
@@ -410,7 +429,8 @@ def cmd_issue(args: argparse.Namespace) -> int:
     if not profile_matches_type(args.profile, args.type):
         print(
             f"--profile {args.profile} does not match --type {args.type}: human profiles "
-            f"{tuple(HUMAN_PROFILE_PERMISSIONS)} are for 'human' only."
+            f"{tuple(HUMAN_PROFILE_PERMISSIONS)} are for 'human' only; "
+            f"{tuple(sorted(INTEGRATION_ONLY_PROFILES))} are for 'integration' only."
         )
         return 2
 

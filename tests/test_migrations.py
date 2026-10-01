@@ -69,7 +69,7 @@ EXPECTED_TABLES = {
     "agent_runs",
 }
 
-HEAD_REVISION = "0023"
+HEAD_REVISION = "0024"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (
@@ -878,6 +878,43 @@ def test_migration_0023_round_trip_and_checks():
             )
         assert not {"conversation_id", "trigger_message_id"} & columns
         command.upgrade(config, "0023")
+    finally:
+        engine.dispose()
+        _b2_drop(url)
+
+
+# --- SELF: migration 0024 (confirmaciones agent runs) on a disposable database ---
+
+
+def test_migration_0024_round_trip_and_checks():
+    from sqlalchemy.exc import IntegrityError
+
+    url = _b2_disposable_url()
+    config = _alembic_config(url)
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "0023")
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                _cob_insert(conn, agent_key="confirmaciones")
+
+        command.upgrade(config, "0024")
+        with engine.begin() as conn:
+            _cob_insert(conn, agent_key="confirmaciones")
+            _cob_insert(conn)  # cobranza rows unchanged
+        for bad in ({"agent_key": "inventario"}, {"agent_key": "reception"}):
+            with pytest.raises(IntegrityError):  # reception still needs its trigger
+                with engine.begin() as conn:
+                    _cob_insert(conn, **bad)
+
+        command.downgrade(config, "0023")
+        with engine.begin() as conn:
+            remaining = set(conn.execute(text("SELECT agent_key FROM agent_runs")).scalars())
+        assert remaining == {"cobranza"}
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                _cob_insert(conn, agent_key="confirmaciones")
+        command.upgrade(config, "0024")
     finally:
         engine.dispose()
         _b2_drop(url)

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.agents_runtime import cobranza
+from app.agents_runtime import cobranza, confirmaciones
 from app.agents_runtime.errors import DISABLED, NOT_PROVISIONED, agent_disabled
 from app.agents_runtime.models import AgentRun
 from app.agents_runtime.schemas import AgentRunCounts, AgentRunOut, AgentRunPage
@@ -124,15 +124,26 @@ def start_run(
     agent_key: str,
     idempotency: IdempotencyClaim | None = None,
 ) -> tuple[int, ExecutionContext]:
-    """tx1: claim → authorize → kill switch → proposer → insert ``running``."""
+    """tx1: claim → authorize → kill switch → proposer → insert ``running``.
+
+    Dispatches on ``agent_key`` before authorizing: each agent has its own gate
+    (SELF: confirmaciones is human-only with ``appointments.read`` +
+    ``deliveries.create`` and queues as the caller, so the caller is the actor).
+    """
     with session.begin():
         receipt = claim_receipt(session, ctx, idempotency)
-        _authorize(session, ctx)
-        if agent_key != cobranza.AGENT_KEY:
+        if agent_key == confirmaciones.AGENT_KEY:
+            confirmaciones.authorize(session, ctx)
+            if not confirmaciones.confirmaciones_enabled():
+                raise agent_disabled(agent_key, DISABLED)
+            proposer = ctx
+        elif agent_key == cobranza.AGENT_KEY:
+            _authorize(session, ctx)
+            if not cobranza_enabled():
+                raise agent_disabled(agent_key, DISABLED)
+            proposer = _proposer(session, ctx)
+        else:
             raise AppError(ErrorCode.INVALID_INPUT, "Unknown agent.")
-        if not cobranza_enabled():
-            raise agent_disabled(agent_key, DISABLED)
-        proposer = _proposer(session, ctx)
         run = AgentRun(
             organization_id=ctx.organization_id,
             agent_key=agent_key,
@@ -217,7 +228,10 @@ def run_agent(
         return RunResult(int(outcome.outcome["run_id"]), True)
     run_id, proposer = outcome.result
     try:
-        counts = cobranza.sweep(session, run_id=run_id, proposer=proposer)
+        if agent_key == confirmaciones.AGENT_KEY:
+            counts = confirmaciones.sweep(session, caller=proposer)
+        else:
+            counts = cobranza.sweep(session, run_id=run_id, proposer=proposer)
     except Exception as exc:
         category = exc.code.value if isinstance(exc, AppError) else "unexpected"
         _fail(session, ctx, run_id, category)

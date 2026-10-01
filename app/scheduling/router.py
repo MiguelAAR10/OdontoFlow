@@ -46,6 +46,7 @@ from app.idempotency.service import (
 )
 from app.messaging.router import require_uuid4_idempotency_key
 from app.scheduling.models import AppointmentProposal
+from app.scheduling.public_booking import OP_PUBLIC_BOOKING_CREATE, book_public
 from app.scheduling.query import (
     create_availability_rule,
     create_schedule_block,
@@ -63,6 +64,8 @@ from app.scheduling.schemas import (
     AppointmentReschedule,
     AvailabilityRuleCreate,
     AvailabilityRuleRead,
+    PublicBookingCreate,
+    PublicBookingRead,
     ScheduleBlockCreate,
     ScheduleBlockRead,
     SlotQuery,
@@ -287,6 +290,48 @@ def create_appointment_route(
         response.headers[REPLAY_HEADER] = "true"
         return _appointment_read_from_outcome(outcome.outcome)
     return outcome.result
+
+
+@router.post("/public/bookings", response_model=PublicBookingRead, status_code=201)
+def create_public_booking_route(
+    payload: PublicBookingCreate,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> PublicBookingRead:
+    """SELF: a patient books from the phone through the frontend BFF.
+
+    The BFF credential (``patient-booking``, integration) must send a fresh
+    UUIDv4 ``Idempotency-Key`` per submit. A replay renders the stored outcome.
+    """
+    ctx = resolve_http_context(request)
+    params = payload.model_dump()
+
+    def _command(session: Session, **kwargs):
+        return run_idempotent_command(
+            session,
+            operation=book_public,
+            operation_name=OP_PUBLIC_BOOKING_CREATE,
+            key=_idempotency_key(request),
+            ctx=ctx,
+            params=params,
+            **kwargs,
+        )
+
+    outcome = book_appointment_with_retry(db, operation=_command, **params)
+    stored = outcome.outcome if outcome.replayed else outcome.result
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+    return PublicBookingRead(
+        reference=stored["reference"],
+        appointment_id=int(stored["resource_id"]),
+        state=stored["state"],
+        service_id=stored["service_id"],
+        location_id=stored["location_id"],
+        practitioner_id=stored["practitioner_id"],
+        start_utc=datetime.fromisoformat(stored["start_utc"]),
+        end_utc=datetime.fromisoformat(stored["end_utc"]),
+    )
 
 
 # Cancellation and rescheduling deliberately skip the booking retry policy:

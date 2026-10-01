@@ -297,7 +297,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "const": "cobranza",
+                  "enum": [
+                    "cobranza",
+                    "confirmaciones"
+                  ],
                   "type": "string"
                 },
                 {
@@ -16500,6 +16503,240 @@
         }
       }
     },
+    "/public/bookings": {
+      "post": {
+        "summary": "Create Public Booking Route",
+        "description": "SELF: a patient books from the phone through the frontend BFF.\n\nThe BFF credential (``patient-booking``, integration) must send a fresh\nUUIDv4 ``Idempotency-Key`` per submit. A replay renders the stored outcome.",
+        "operationId": "create_public_booking_route_public_bookings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicBookingCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicBookingRead"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid integration credential is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated principal lacks the required permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The credential rate limit was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds until the current rate-limit window resets.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 60
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The integration surface is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request body exceeds the configured limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Request-Id",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Correlation-Id",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
     "/appointments/{appointment_id}/cancel": {
       "post": {
         "summary": "Cancel Appointment Route",
@@ -20323,7 +20560,10 @@
         "properties": {
           "agent_key": {
             "type": "string",
-            "const": "cobranza",
+            "enum": [
+              "cobranza",
+              "confirmaciones"
+            ],
             "title": "Agent Key"
           }
         },
@@ -20345,7 +20585,8 @@
             "type": "string",
             "enum": [
               "cobranza",
-              "reception"
+              "reception",
+              "confirmaciones"
             ],
             "title": "Agent Key"
           },
@@ -23608,6 +23849,108 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ProposalDecline"
+      },
+      "PublicBookingCreate": {
+        "properties": {
+          "service_id": {
+            "type": "integer",
+            "title": "Service Id"
+          },
+          "location_id": {
+            "type": "integer",
+            "title": "Location Id"
+          },
+          "practitioner_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Practitioner Id"
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start"
+          },
+          "full_name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Full Name"
+          },
+          "phone": {
+            "type": "string",
+            "pattern": "^\\+[1-9][0-9]{7,14}$",
+            "title": "Phone"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "service_id",
+          "location_id",
+          "start",
+          "full_name",
+          "phone"
+        ],
+        "title": "PublicBookingCreate",
+        "description": "What a patient picks on the phone; duration, end, state and lead are server facts."
+      },
+      "PublicBookingRead": {
+        "properties": {
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          },
+          "appointment_id": {
+            "type": "integer",
+            "title": "Appointment Id"
+          },
+          "state": {
+            "type": "string",
+            "const": "confirmed",
+            "title": "State"
+          },
+          "service_id": {
+            "type": "integer",
+            "title": "Service Id"
+          },
+          "location_id": {
+            "type": "integer",
+            "title": "Location Id"
+          },
+          "practitioner_id": {
+            "type": "integer",
+            "title": "Practitioner Id"
+          },
+          "start_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Utc"
+          },
+          "end_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Utc"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reference",
+          "appointment_id",
+          "state",
+          "service_id",
+          "location_id",
+          "practitioner_id",
+          "start_utc",
+          "end_utc"
+        ],
+        "title": "PublicBookingRead",
+        "description": "The patient's receipt: a reference and the confirmed interval, no lead/patient ids."
       },
       "ReorderPointRead": {
         "properties": {
