@@ -155,6 +155,7 @@ paths:
           - enum:
             - cobranza
             - confirmaciones
+            - inventario
             type: string
           - type: 'null'
           title: Agent Key
@@ -6779,6 +6780,8 @@ paths:
           - enum:
             - collection_reminder
             - collection_follow_up
+            - inventory_transfer
+            - inventory_entry
             - appointment_booking
             type: string
           - type: 'null'
@@ -9906,6 +9909,7 @@ components:
           enum:
           - cobranza
           - confirmaciones
+          - inventario
           title: Agent Key
       additionalProperties: false
       type: object
@@ -9925,6 +9929,7 @@ components:
           - cobranza
           - reception
           - confirmaciones
+          - inventario
           title: Agent Key
         trigger:
           type: string
@@ -11150,6 +11155,8 @@ components:
           enum:
           - collection_reminder
           - collection_follow_up
+          - inventory_transfer
+          - inventory_entry
           - appointment_booking
           title: Kind
         agent_key:

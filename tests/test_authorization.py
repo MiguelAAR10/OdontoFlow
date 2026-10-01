@@ -1017,8 +1017,13 @@ def test_only_humans_can_ever_decide_proposals():
     }
     secretaria = set(HUMAN_PROFILE_PERMISSIONS["secretaria"])
     assert {"proposals.read", "proposals.decide"} <= secretaria
-    assert {spec.required_permission for spec in KINDS.values()} <= secretaria
+    collection = {k: v for k, v in KINDS.items() if k.startswith("collection_")}
+    assert {spec.required_permission for spec in collection.values()} <= secretaria
     assert set(HUMAN_PROFILE_PERMISSIONS["administrador"]) >= secretaria
+    # INV: only the administrador approves inventory kinds.
+    inventory = {KINDS[k].required_permission for k in ("inventory_transfer", "inventory_entry")}
+    assert inventory <= set(HUMAN_PROFILE_PERMISSIONS["administrador"])
+    assert not inventory & secretaria
     assert not {spec.required_permission for spec in KINDS.values()} & {
         "payments.reverse",
         "payments.manage",

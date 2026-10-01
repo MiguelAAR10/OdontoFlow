@@ -1,5 +1,47 @@
 # OdontoFlow Changelog
 
+## INV — Inventory agent: multi-sede transfer proposals with evidence (2026-10-01)
+
+- `POST /agent-runs {agent_key:"inventario"}`: machine callers need
+  `proposals.create`, humans `proposals.decide`, both `products.read` +
+  `movements.read` (secretaria → 403); kill switch `AGENT_INVENTARIO_ENABLED`;
+  human trigger proposes as the org's `airy-inventario` (else 409
+  `AGENT_DISABLED reason=not_provisioned`). COB's `_authorize`/`_proposer`
+  are parameterized (reads, proposer name, agent_key), and `run_agent`
+  dispatches each key explicitly (an inventario run never reaches the
+  collections sweep).
+- Sweep (`app/agents_runtime/inventario.py`): one org-scoped read of every
+  active reorder point (balance, 7-day SALIDA consumption, latest movement id,
+  `handled` = an inventory proposal on the subject created today in the
+  location tz, approved, or pending and not expired). In Python: short sedes
+  ordered by (location, product), capped at 200; donor = largest remaining
+  surplus above its own minimum (tie → lowest location id), allocated across
+  candidates within the run; `target_fill = 2 × min − balance`
+  (`TARGET_MULTIPLIER`). Donor → `inventory_transfer` (quantity
+  `min(target_fill, surplus)`), none → `inventory_entry`. Evidence carries the
+  balances, minimums, consumption and the `subject_version` of the same read.
+- Proposal kinds `inventory_transfer` (executes `transfer_product`, reason
+  `Propuesta #id`, `result_ref {type:"inventory_transfer", id:transfer_id}`) and
+  `inventory_entry` (executes `register_entry` without `unit_price`,
+  `result_ref {type:"inventory_movement", id}`); both require
+  `movements.create` (administrador only; secretaria inbox
+  `actions == ["decline"]`). `subject_id` from one helper
+  `product_location_subject_id`; `subject_version` = max movement id per
+  location, so any ledger change before approval → `superseded`. Executors
+  replay their PF4 receipt. `ProposalKind.revalidate` replaces the hard-coded
+  `require_open_balance` (collection kinds keep it; inventory kinds no-op).
+  `POST /agent/proposals` stays closed to inventory kinds (422).
+- New profile `inventory-agent` (`proposals.create`, `proposals.read`,
+  `products.read`, `movements.read`); the demo seed adds `airy-inventario`
+  (no credential). On the seed one run proposes Lince ← Jesús María 16.00.
+- Migration `0025_inventory_agent` (head `0025`): `ck_agent_proposals_kind` adds
+  `inventory_transfer`, `inventory_entry`; `ck_agent_runs_agent_key` adds
+  `inventario`. OpenAPI regenerated (`AgentKey`, `RunAgentKey`, `InboxKind`).
+- Known limits: two siblings drawing on one donor supersede each other on
+  approval and the same-day dedupe holds the second until the next day; an open
+  transfer and an open entry for one product×location are prevented only by the
+  sweep (not a DB invariant); no purchase orders or valuation.
+
 ## SELF — Patient self-booking + D-1 reminders (2026-10-01)
 
 - `POST /public/bookings` (scheduling router, authenticated): the frontend BFF

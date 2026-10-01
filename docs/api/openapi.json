@@ -299,7 +299,8 @@
                 {
                   "enum": [
                     "cobranza",
-                    "confirmaciones"
+                    "confirmaciones",
+                    "inventario"
                   ],
                   "type": "string"
                 },
@@ -14134,6 +14135,8 @@
                   "enum": [
                     "collection_reminder",
                     "collection_follow_up",
+                    "inventory_transfer",
+                    "inventory_entry",
                     "appointment_booking"
                   ],
                   "type": "string"
@@ -20562,7 +20565,8 @@
             "type": "string",
             "enum": [
               "cobranza",
-              "confirmaciones"
+              "confirmaciones",
+              "inventario"
             ],
             "title": "Agent Key"
           }
@@ -20586,7 +20590,8 @@
             "enum": [
               "cobranza",
               "reception",
-              "confirmaciones"
+              "confirmaciones",
+              "inventario"
             ],
             "title": "Agent Key"
           },
@@ -22277,6 +22282,8 @@
             "enum": [
               "collection_reminder",
               "collection_follow_up",
+              "inventory_transfer",
+              "inventory_entry",
               "appointment_booking"
             ],
             "title": "Kind"

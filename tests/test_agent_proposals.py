@@ -819,6 +819,29 @@ def test_no_kind_ever_requires_an_l4_permission():
     from app.proposals.executors import KINDS
 
     required = {spec.required_permission for spec in KINDS.values()}
-    assert set(KINDS) == {"collection_reminder", "collection_follow_up"}
+    assert set(KINDS) == {
+        "collection_reminder", "collection_follow_up", "inventory_transfer", "inventory_entry",
+    }
     assert required <= set(PERMISSION_CODES)
     assert not required & {PAYMENTS_REVERSE, PAYMENTS_MANAGE}
+
+
+def test_inventory_kinds_require_movements_create_and_never_l4():
+    from app.iam.permissions import MOVEMENTS_CREATE, PAYMENTS_MANAGE, PAYMENTS_REVERSE
+    from app.proposals.executors import KINDS
+
+    for kind in ("inventory_transfer", "inventory_entry"):
+        assert KINDS[kind].required_permission == MOVEMENTS_CREATE
+        assert KINDS[kind].required_permission not in {PAYMENTS_REVERSE, PAYMENTS_MANAGE}
+
+
+def test_inventory_kinds_are_never_proposed_over_http(client, session):
+    _pid, agent = _agent(session)
+    for kind, payload in (
+        ("inventory_transfer", {"product_id": 1, "origin_location_id": 1,
+                                "destination_location_id": 2, "quantity": "1"}),
+        ("inventory_entry", {"product_id": 1, "location_id": 1, "quantity": "1"}),
+    ):
+        response = _create(client, agent, kind, payload, reason="stock bajo")
+        assert response.status_code == 422, response.text
+    assert _count(session, AgentProposal) == 0

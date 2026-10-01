@@ -3,7 +3,9 @@
 Each kind declares its args model, the permission a human needs to approve it,
 its TTL, how to resolve its subject at create time, how to recompute the
 subject version at approval time, and how to execute the existing domain
-command under the approving human's context. C2/C3 add kinds here additively.
+command under the approving human's context. C2/C3 add kinds here additively
+(INV: ``inventory_transfer`` and ``inventory_entry``, proposed only by the
+server-side inventory sweep).
 
 Invariant: no kind ever requires an L4 permission (``payments.reverse``,
 ``payments.manage``); ``tests/test_agent_proposals.py`` pins it.
@@ -17,23 +19,33 @@ from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import and_, select
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.clinical.models import Patient, ServiceExecution, Visit
-from app.economics.models import Charge, ChargeFollowUp
+from app.economics.models import Charge, ChargeFollowUp, Product
 from app.economics.schemas import ChargeFollowUpCreate
 from app.economics.service import OP_FOLLOW_UPS_CREATE, _net_paid_expr, open_follow_up
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
-from app.iam.permissions import DELIVERIES_CREATE, FOLLOW_UPS_CREATE
+from app.iam.permissions import DELIVERIES_CREATE, FOLLOW_UPS_CREATE, MOVEMENTS_CREATE
 from app.idempotency.service import command_fingerprint, run_idempotent_command
+from app.inventory.models import InventoryMovement
+from app.inventory.schemas import EntryCreate, TransferCreate
+from app.inventory.service import (
+    OP_ENTRIES_CREATE,
+    OP_TRANSFERS_CREATE,
+    register_entry,
+    transfer_product,
+)
 from app.messaging.models import ContactIdentity, Conversation
 from app.messaging.service import enqueue_outbound_message
+from app.organization.models import Location
 
 TTL = timedelta(hours=72)
 CHARGE_SUBJECT = "charge"
+PRODUCT_LOCATION_SUBJECT = "product_location"
 
 
 # --- args ---------------------------------------------------------------------
@@ -52,6 +64,29 @@ class CollectionFollowUpArgs(BaseModel):
     charge_id: int = Field(gt=0)
     next_follow_up_on: date
     note: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class InventoryTransferArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: int = Field(gt=0)
+    origin_location_id: int = Field(gt=0)
+    destination_location_id: int = Field(gt=0)
+    quantity: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+
+    @model_validator(mode="after")
+    def _distinct_locations(self):
+        if self.origin_location_id == self.destination_location_id:
+            raise ValueError("origin and destination must differ")
+        return self
+
+
+class InventoryEntryArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: int = Field(gt=0)
+    location_id: int = Field(gt=0)
+    quantity: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
 
 
 # --- charge facts (server-computed; never the agent's evidence) ---------------
@@ -209,6 +244,8 @@ class ProposalKind:
     version: Callable[[Session, int, BaseModel], str]
     execute: Callable[[Session, ExecutionContext, Execution], dict]
     summary: Callable[[BaseModel, ChargeFacts | None], str]
+    #: tx1 re-validation after the version check (approve time).
+    revalidate: Callable[[Session, int, BaseModel], None]
 
 
 def _money(value: Decimal) -> str:
@@ -323,6 +360,155 @@ def _reminder_summary(args, facts: ChargeFacts | None) -> str:
     return f"Recordatorio de pago a {facts.patient_name} — saldo {_money(facts.balance)}"
 
 
+# inventory (INV) -------------------------------------------------------------------
+
+
+def product_location_subject_id(product_id, location_id):
+    """The one ``subject_id`` format for a product at a location: ``"{p}:{l}"``.
+
+    Plain ints give the stored string; SQL column expressions give the same
+    value as a SQL ``concat`` (the sweep's dedupe EXISTS), so the resolver and
+    the sweep can never disagree on the format.
+    """
+    if isinstance(product_id, int) and isinstance(location_id, int):
+        return f"{product_id}:{location_id}"
+    return func.concat(product_id, ":", location_id)
+
+
+def max_movement_id(session: Session, organization_id: int, product_id: int,
+                    location_id: int) -> int | None:
+    return session.scalar(
+        select(func.max(InventoryMovement.id)).where(
+            InventoryMovement.organization_id == organization_id,
+            InventoryMovement.product_id == product_id,
+            InventoryMovement.location_id == location_id,
+        )
+    )
+
+
+def ledger_version(*movement_ids: int | None) -> str:
+    """``subject_version`` of an inventory kind: the max movement id per location."""
+    return "|".join("-" if value is None else str(value) for value in movement_ids)
+
+
+def _require_active(session: Session, organization_id: int, product_id: int,
+                    location_ids) -> None:
+    product = session.scalar(
+        select(Product.is_active).where(
+            Product.organization_id == organization_id, Product.id == product_id
+        )
+    )
+    if product is None:
+        raise AppError(ErrorCode.NOT_FOUND, "Product not found.")
+    active = dict(
+        session.execute(
+            select(Location.id, Location.is_active).where(
+                Location.organization_id == organization_id, Location.id.in_(list(location_ids))
+            )
+        ).all()
+    )
+    if set(active) != set(location_ids):
+        raise AppError(ErrorCode.NOT_FOUND, "Location not found.")
+    if not product or not all(active.values()):
+        raise AppError(ErrorCode.ENTITY_INACTIVE, "Product or location is inactive.")
+
+
+def _no_revalidation(session: Session, organization_id: int, args) -> None:
+    """Inventory kinds: any balance change already moved the version (superseded);
+    ``require_stock`` inside ``transfer_product`` is the final floor."""
+
+
+def _transfer_current(session: Session, organization_id: int, args) -> str:
+    return ledger_version(
+        max_movement_id(session, organization_id, args.product_id, args.origin_location_id),
+        max_movement_id(session, organization_id, args.product_id, args.destination_location_id),
+    )
+
+
+def _transfer_subject(session: Session, organization_id: int, args) -> Subject:
+    _require_active(session, organization_id, args.product_id,
+                    (args.origin_location_id, args.destination_location_id))
+    return Subject(
+        PRODUCT_LOCATION_SUBJECT,
+        product_location_subject_id(args.product_id, args.destination_location_id),
+        _transfer_current(session, organization_id, args),
+        args.destination_location_id,
+        None,
+    )
+
+
+def _transfer_execute(session: Session, ctx: ExecutionContext, item: Execution) -> dict:
+    args = item.args
+    data = TransferCreate(
+        origin_location_id=args.origin_location_id,
+        destination_location_id=args.destination_location_id,
+        quantity=args.quantity,
+        reason=f"Propuesta #{item.proposal_id}",
+    )
+    outcome = run_idempotent_command(
+        session,
+        operation=transfer_product,
+        operation_name=OP_TRANSFERS_CREATE,
+        key=str(item.execution_key),
+        ctx=ctx,
+        params={"product_id": args.product_id, **data.model_dump()},
+        product_id=args.product_id,
+        data=data,
+    )
+    if outcome.replayed:
+        return {"type": "inventory_transfer", "id": outcome.outcome["transfer_id"]}
+    return {"type": "inventory_transfer", "id": outcome.result.transfer_id}
+
+
+def _transfer_summary(args, _facts) -> str:
+    return (
+        f"Traspaso de {args.quantity:.2f} uds. (producto #{args.product_id}) "
+        f"sede #{args.origin_location_id} → #{args.destination_location_id}"
+    )
+
+
+def _entry_current(session: Session, organization_id: int, args) -> str:
+    return ledger_version(
+        max_movement_id(session, organization_id, args.product_id, args.location_id)
+    )
+
+
+def _entry_subject(session: Session, organization_id: int, args) -> Subject:
+    _require_active(session, organization_id, args.product_id, (args.location_id,))
+    return Subject(
+        PRODUCT_LOCATION_SUBJECT,
+        product_location_subject_id(args.product_id, args.location_id),
+        _entry_current(session, organization_id, args),
+        args.location_id,
+        None,
+    )
+
+
+def _entry_execute(session: Session, ctx: ExecutionContext, item: Execution) -> dict:
+    args = item.args
+    data = EntryCreate(location_id=args.location_id, quantity=args.quantity)
+    outcome = run_idempotent_command(
+        session,
+        operation=register_entry,
+        operation_name=OP_ENTRIES_CREATE,
+        key=str(item.execution_key),
+        ctx=ctx,
+        params={"product_id": args.product_id, **data.model_dump()},
+        product_id=args.product_id,
+        data=data,
+    )
+    if outcome.replayed:
+        return {"type": "inventory_movement", "id": int(outcome.outcome["resource_id"])}
+    return {"type": "inventory_movement", "id": outcome.result.id}
+
+
+def _entry_summary(args, _facts) -> str:
+    return (
+        f"Reposición de {args.quantity:.2f} uds. (producto #{args.product_id}) "
+        f"en sede #{args.location_id}"
+    )
+
+
 KINDS: dict[str, ProposalKind] = {
     "collection_reminder": ProposalKind(
         name="collection_reminder",
@@ -333,6 +519,7 @@ KINDS: dict[str, ProposalKind] = {
         version=_reminder_current,
         execute=_reminder_execute,
         summary=_reminder_summary,
+        revalidate=require_open_balance,
     ),
     "collection_follow_up": ProposalKind(
         name="collection_follow_up",
@@ -343,6 +530,29 @@ KINDS: dict[str, ProposalKind] = {
         version=_follow_up_current,
         execute=_follow_up_execute,
         summary=_follow_up_summary,
+        revalidate=require_open_balance,
+    ),
+    "inventory_transfer": ProposalKind(
+        name="inventory_transfer",
+        args_model=InventoryTransferArgs,
+        required_permission=MOVEMENTS_CREATE,
+        ttl=TTL,
+        subject=_transfer_subject,
+        version=_transfer_current,
+        execute=_transfer_execute,
+        summary=_transfer_summary,
+        revalidate=_no_revalidation,
+    ),
+    "inventory_entry": ProposalKind(
+        name="inventory_entry",
+        args_model=InventoryEntryArgs,
+        required_permission=MOVEMENTS_CREATE,
+        ttl=TTL,
+        subject=_entry_subject,
+        version=_entry_current,
+        execute=_entry_execute,
+        summary=_entry_summary,
+        revalidate=_no_revalidation,
     ),
 }
 

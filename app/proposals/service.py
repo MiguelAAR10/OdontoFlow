@@ -64,7 +64,6 @@ from app.proposals.executors import (
     charge_facts,
     load_args,
     normalize_payload,
-    require_open_balance,
 )
 from app.proposals.executors import (
     payload_hash as compute_payload_hash,
@@ -339,7 +338,7 @@ def approve_proposal(
             if spec.version(session, org, args) != proposal.subject_version:
                 _transition(session, ctx, proposal, "superseded")
             else:
-                require_open_balance(session, org, args)
+                spec.revalidate(session, org, args)
                 _transition(
                     session,
                     ctx,

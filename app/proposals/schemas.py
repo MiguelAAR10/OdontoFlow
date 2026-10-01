@@ -8,8 +8,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+#: INV: inventory kinds are proposed only by the server-side sweep, so this
+#: HTTP body Literal stays closed (evidence is always server facts).
 ProposalKindName = Literal["collection_reminder", "collection_follow_up"]
-InboxKind = Literal["collection_reminder", "collection_follow_up", "appointment_booking"]
+InboxKind = Literal[
+    "collection_reminder",
+    "collection_follow_up",
+    "inventory_transfer",
+    "inventory_entry",
+    "appointment_booking",
+]
 InboxSource = Literal["agent_proposal", "appointment_proposal"]
 InboxStatus = Literal[
     "pending", "approved", "executed", "failed", "declined", "expired", "superseded"

@@ -536,7 +536,7 @@ def test_runs_are_tenant_scoped(client, session):
 
 def test_body_and_key_validation(client, session):
     _airy_id, agent = _airy_caller(session)
-    for body in ({"agent_key": "inventario"}, {"agent_key": "cobranza", "trigger": "event"}, {}):
+    for body in ({"agent_key": "inventarios"}, {"agent_key": "cobranza", "trigger": "event"}, {}):
         response = _run(client, agent, body=body)
         assert response.status_code == 422, response.text
     assert _run(client, agent, send_key=False).status_code == 422

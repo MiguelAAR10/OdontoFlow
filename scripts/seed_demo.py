@@ -15,7 +15,9 @@ services with the explicit ``system`` execution context:
 * three ``open`` waitlist entries for "Limpieza dental" (B0.5);
 * COB: a sandbox WhatsApp conversation for the S/ 180 patient only (so the
   collections run proposes exactly one reminder) and the ``airy-cobranza``
-  agent principal with profile ``collections-agent`` (no credential).
+  agent principal with profile ``collections-agent`` (no credential);
+* INV: the ``airy-inventario`` agent principal with profile ``inventory-agent``
+  (no credential), the proposer of human-triggered inventory runs.
 
 Dates. Every date is an offset from one *anchor* day: ``--anchor-date`` or, by
 default, today in America/Lima. Offsets, hours, names and amounts come from
@@ -208,6 +210,9 @@ COLLECTIONS_PATIENT_INDEX = 0
 SANDBOX_CHANNEL_EXTERNAL_ID = "sandbox-local"
 COBRANZA_AGENT_NAME = "airy-cobranza"
 COBRANZA_AGENT_PROFILE = "collections-agent"
+#: INV: the inventory proposer for human-triggered runs (no credential).
+INVENTARIO_AGENT_NAME = "airy-inventario"
+INVENTARIO_AGENT_PROFILE = "inventory-agent"
 
 
 def default_anchor() -> date:
@@ -556,7 +561,8 @@ def _seed_waitlist(
 
 
 def _seed_collections(session: Session, *, organization_id: int, patients: list[dict]) -> None:
-    """COB: one reachable sandbox conversation and the collections proposer."""
+    """COB: one reachable sandbox conversation and the collections proposer;
+    INV: the inventory proposer."""
     row = patients[COLLECTIONS_PATIENT_INDEX]
     patient = session.scalar(
         select(Patient).where(Patient.organization_id == organization_id, Patient.dni == row["dni"])
@@ -625,6 +631,18 @@ def _seed_collections(session: Session, *, organization_id: int, patients: list[
         organization_id=organization_id,
         principal_id=agent.id,
         profile=COBRANZA_AGENT_PROFILE,
+    )
+    inventory_agent = _resolve_principal(
+        session,
+        organization_id=organization_id,
+        name=INVENTARIO_AGENT_NAME,
+        principal_type="agent",
+    )
+    _assign_profile(
+        session,
+        organization_id=organization_id,
+        principal_id=inventory_agent.id,
+        profile=INVENTARIO_AGENT_PROFILE,
     )
     session.commit()
 

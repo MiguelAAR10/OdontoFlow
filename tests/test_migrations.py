@@ -69,7 +69,7 @@ EXPECTED_TABLES = {
     "agent_runs",
 }
 
-HEAD_REVISION = "0024"
+HEAD_REVISION = "0025"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (
@@ -915,6 +915,55 @@ def test_migration_0024_round_trip_and_checks():
             with engine.begin() as conn:
                 _cob_insert(conn, agent_key="confirmaciones")
         command.upgrade(config, "0024")
+    finally:
+        engine.dispose()
+        _b2_drop(url)
+
+
+# --- INV: migration 0025 (inventory agent kinds and runs) on a disposable database ---
+
+
+def test_migration_0025_round_trip_and_checks():
+    from sqlalchemy.exc import IntegrityError
+
+    url = _b2_disposable_url()
+    config = _alembic_config(url)
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "0024")
+        for insert in (
+            lambda conn: _cob_insert(conn, agent_key="inventario"),
+            lambda conn: _b2_insert(conn, kind="inventory_transfer"),
+            lambda conn: _b2_insert(conn, kind="inventory_entry"),
+        ):
+            with pytest.raises(IntegrityError):
+                with engine.begin() as conn:
+                    insert(conn)
+
+        command.upgrade(config, "0025")
+        with engine.begin() as conn:
+            _cob_insert(conn, agent_key="inventario")
+            _cob_insert(conn)  # cobranza rows unchanged
+            _b2_insert(conn, kind="inventory_transfer")
+            _b2_insert(conn, kind="inventory_entry")
+            _b2_insert(conn)  # collection kinds unchanged
+        for bad in (
+            lambda conn: _cob_insert(conn, agent_key="inventarios"),
+            lambda conn: _b2_insert(conn, kind="inventory_adjustment"),
+        ):
+            with pytest.raises(IntegrityError):
+                with engine.begin() as conn:
+                    bad(conn)
+
+        command.downgrade(config, "0024")
+        with engine.begin() as conn:
+            runs = set(conn.execute(text("SELECT agent_key FROM agent_runs")).scalars())
+            kinds = set(conn.execute(text("SELECT kind FROM agent_proposals")).scalars())
+        assert runs == {"cobranza"} and kinds == {"collection_reminder"}
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                _b2_insert(conn, kind="inventory_transfer")
+        command.upgrade(config, "0025")
     finally:
         engine.dispose()
         _b2_drop(url)

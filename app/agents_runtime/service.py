@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.agents_runtime import cobranza, confirmaciones
+from app.agents_runtime import cobranza, confirmaciones, inventario
 from app.agents_runtime.errors import DISABLED, NOT_PROVISIONED, agent_disabled
 from app.agents_runtime.models import AgentRun
 from app.agents_runtime.schemas import AgentRunCounts, AgentRunOut, AgentRunPage
@@ -23,7 +23,14 @@ from app.errors import AppError, ErrorCode
 from app.events.service import record_domain_event
 from app.iam.context import ExecutionContext
 from app.iam.models import Membership, Principal
-from app.iam.permissions import CHARGES_READ, PROPOSALS_CREATE, PROPOSALS_DECIDE, PROPOSALS_READ
+from app.iam.permissions import (
+    CHARGES_READ,
+    MOVEMENTS_READ,
+    PRODUCTS_READ,
+    PROPOSALS_CREATE,
+    PROPOSALS_DECIDE,
+    PROPOSALS_READ,
+)
 from app.iam.service import (
     PERMISSION_DENIED_HTTP_STATUS,
     PERMISSION_DENIED_MESSAGE,
@@ -44,11 +51,21 @@ KILL_SWITCH_ENV = "AGENT_COBRANZA_ENABLED"
 #: The org's collections proposer for human-triggered runs. A fixed server
 #: constant: never taken from the body or from ``agent_key``.
 COBRANZA_PROPOSER = "airy-cobranza"
+#: INV: the org's inventory proposer for human-triggered runs (same rule).
+INVENTARIO_PROPOSER = "airy-inventario"
+INVENTARIO_KILL_SWITCH_ENV = "AGENT_INVENTARIO_ENABLED"
 MACHINE_TYPES = ("agent", "integration")
+#: The reads each proposing agent's sweep needs, on top of the trigger gate.
+COBRANZA_READS = (CHARGES_READ,)
+INVENTARIO_READS = (PRODUCTS_READ, MOVEMENTS_READ)
 
 
 def cobranza_enabled() -> bool:
     return _boolean_env(KILL_SWITCH_ENV, True)
+
+
+def inventario_enabled() -> bool:
+    return _boolean_env(INVENTARIO_KILL_SWITCH_ENV, True)
 
 
 def _deny() -> AppError:
@@ -60,18 +77,23 @@ def _deny() -> AppError:
     )
 
 
-def _authorize(session: Session, ctx: ExecutionContext) -> None:
+def _authorize(session: Session, ctx: ExecutionContext, reads: tuple[str, ...]) -> None:
+    """Machine callers need ``proposals.create``, humans ``proposals.decide``;
+    both need the agent's ``reads``; ``system`` is refused."""
     if ctx.principal_type in MACHINE_TYPES:
         require_permission(session, ctx, PROPOSALS_CREATE)
     elif ctx.principal_type == "human":
         require_permission(session, ctx, PROPOSALS_DECIDE)
     else:
         raise _deny()
-    require_permission(session, ctx, CHARGES_READ)
+    for code in reads:
+        require_permission(session, ctx, code)
 
 
-def _proposer(session: Session, ctx: ExecutionContext) -> ExecutionContext:
-    """Who proposes: the machine caller itself, or this org's ``airy-cobranza``."""
+def _proposer(
+    session: Session, ctx: ExecutionContext, *, name: str, agent_key: str
+) -> ExecutionContext:
+    """Who proposes: the machine caller itself, or this org's fixed ``name`` agent."""
     if ctx.principal_type in MACHINE_TYPES:
         return ctx
     principal_id = session.scalar(
@@ -79,7 +101,7 @@ def _proposer(session: Session, ctx: ExecutionContext) -> ExecutionContext:
         .join(Membership, Membership.principal_id == Principal.id)
         .where(
             Principal.type == "agent",
-            Principal.display_name == COBRANZA_PROPOSER,
+            Principal.display_name == name,
             Membership.organization_id == ctx.organization_id,
             Membership.is_active.is_(True),
         )
@@ -89,7 +111,7 @@ def _proposer(session: Session, ctx: ExecutionContext) -> ExecutionContext:
     if principal_id is None or not has_permission(
         session, principal_id, ctx.organization_id, PROPOSALS_CREATE
     ):
-        raise agent_disabled(cobranza.AGENT_KEY, NOT_PROVISIONED)
+        raise agent_disabled(agent_key, NOT_PROVISIONED)
     return ExecutionContext(
         organization_id=ctx.organization_id,
         principal_id=principal_id,
@@ -138,10 +160,15 @@ def start_run(
                 raise agent_disabled(agent_key, DISABLED)
             proposer = ctx
         elif agent_key == cobranza.AGENT_KEY:
-            _authorize(session, ctx)
+            _authorize(session, ctx, COBRANZA_READS)
             if not cobranza_enabled():
                 raise agent_disabled(agent_key, DISABLED)
-            proposer = _proposer(session, ctx)
+            proposer = _proposer(session, ctx, name=COBRANZA_PROPOSER, agent_key=agent_key)
+        elif agent_key == inventario.AGENT_KEY:
+            _authorize(session, ctx, INVENTARIO_READS)
+            if not inventario_enabled():
+                raise agent_disabled(agent_key, DISABLED)
+            proposer = _proposer(session, ctx, name=INVENTARIO_PROPOSER, agent_key=agent_key)
         else:
             raise AppError(ErrorCode.INVALID_INPUT, "Unknown agent.")
         run = AgentRun(
@@ -230,8 +257,12 @@ def run_agent(
     try:
         if agent_key == confirmaciones.AGENT_KEY:
             counts = confirmaciones.sweep(session, caller=proposer)
-        else:
+        elif agent_key == inventario.AGENT_KEY:
+            counts = inventario.sweep(session, run_id=run_id, proposer=proposer)
+        elif agent_key == cobranza.AGENT_KEY:
             counts = cobranza.sweep(session, run_id=run_id, proposer=proposer)
+        else:  # start_run already refused it; never fall through to another sweep
+            raise AppError(ErrorCode.INVALID_INPUT, "Unknown agent.")
     except Exception as exc:
         category = exc.code.value if isinstance(exc, AppError) else "unexpected"
         _fail(session, ctx, run_id, category)

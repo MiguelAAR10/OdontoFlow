@@ -1,6 +1,6 @@
 """``agent_proposals``: what an agent proposes and a human approves (B2).
 
-Mirrors migration ``0021``; PostgreSQL owns every invariant (closed kind and
+Mirrors migrations ``0021`` and ``0025`` (INV: inventory kinds); PostgreSQL owns every invariant (closed kind and
 status vocabularies, decider/result/error coherence, one open proposal per
 subject, tenant-consistent composite FKs).
 """
@@ -28,7 +28,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 
-PROPOSAL_KINDS = ("collection_reminder", "collection_follow_up")
+PROPOSAL_KINDS = (
+    "collection_reminder",
+    "collection_follow_up",
+    "inventory_transfer",
+    "inventory_entry",
+)
 PROPOSAL_STATUSES = (
     "pending",
     "approved",
@@ -80,7 +85,8 @@ class AgentProposal(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('collection_reminder', 'collection_follow_up')",
+            "kind IN ('collection_reminder', 'collection_follow_up', 'inventory_transfer', "
+            "'inventory_entry')",
             name="ck_agent_proposals_kind",
         ),
         CheckConstraint(

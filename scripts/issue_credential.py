@@ -130,6 +130,9 @@ PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     # B2: a collections agent (AIRY Cobranza) only *proposes*; it never holds
     # ``proposals.decide`` nor the executors' permissions (a human approves).
     "collections-agent": (PROPOSALS_CREATE, PROPOSALS_READ, CHARGES_READ, FOLLOW_UPS_READ),
+    # INV: the inventory agent (AIRY Inventario) reads products and the ledger
+    # and only *proposes* transfers/entries; ``movements.create`` stays human.
+    "inventory-agent": (PROPOSALS_CREATE, PROPOSALS_READ, PRODUCTS_READ, MOVEMENTS_READ),
     "reception-operator": (CONVERSATIONS_READ, CONVERSATIONS_RESUME),
     # SELF: the frontend BFF that lets a patient book from the phone. Catalog
     # and slot reads plus ``POST /public/bookings``; no patient, charge, lead,
