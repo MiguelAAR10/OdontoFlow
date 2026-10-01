@@ -69,7 +69,7 @@ EXPECTED_TABLES = {
     "agent_runs",
 }
 
-HEAD_REVISION = "0022"
+HEAD_REVISION = "0023"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (
@@ -775,6 +775,109 @@ def test_migration_0022_round_trip_and_checks():
         assert "agent_runs" not in _b2_state(engine)[0]
         command.upgrade(config, "0022")
         assert "agent_runs" in _b2_state(engine)[0]
+    finally:
+        engine.dispose()
+        _b2_drop(url)
+
+
+# --- B3: migration 0023 (reception agent runs) on a disposable database -------
+
+
+def _b3_seed_message(conn) -> tuple[int, int, int]:
+    """One channel/contact with two conversations; returns (conv_a, msg_a, msg_b)."""
+    channel = conn.execute(
+        text(
+            "INSERT INTO channel_accounts (organization_id, provider, external_account_id, "
+            "display_name, is_active) VALUES (1, 'whatsapp', 'wa-0023', 'WA', true) RETURNING id"
+        )
+    ).scalar_one()
+    ids = []
+    for n in range(2):
+        contact = conn.execute(
+            text(
+                "INSERT INTO contact_identities (organization_id, channel_account_id, "
+                "external_contact_id, normalized_phone_e164, consent_status) VALUES "
+                "(1, :ch, :ext, :phone, 'opted_in') RETURNING id"
+            ),
+            {"ch": channel, "ext": f"c-0023-{n}", "phone": f"+5198000000{n}"},
+        ).scalar_one()
+        conv = conn.execute(
+            text(
+                "INSERT INTO conversations (organization_id, channel_account_id, "
+                "contact_identity_id, status, last_message_at) VALUES (1, :ch, :ct, 'open', "
+                "now()) RETURNING id"
+            ),
+            {"ch": channel, "ct": contact},
+        ).scalar_one()
+        msg = conn.execute(
+            text(
+                "INSERT INTO messages (organization_id, channel_account_id, conversation_id, "
+                "direction, provider_message_id, message_type, body_text, delivery_status, "
+                "occurred_at, content_expires_at) VALUES (1, :ch, :cv, 'inbound', :pm, 'text', "
+                "'hola', 'received', now(), now() + interval '30 days') RETURNING id"
+            ),
+            {"ch": channel, "cv": conv, "pm": f"wamid-0023-{n}"},
+        ).scalar_one()
+        ids.append((conv, msg))
+    return ids[0][0], ids[0][1], ids[1][1]
+
+
+def _b3_insert(conn, *, agent_key="reception", trigger="event", conversation_id=None,
+               message_id=None):
+    conn.execute(
+        text(
+            "INSERT INTO agent_runs (organization_id, agent_key, trigger, status, "
+            "triggered_by_principal_id, conversation_id, trigger_message_id, finished_at) "
+            "VALUES (1, :agent_key, :trigger, 'completed', 1, :conv, :msg, now())"
+        ),
+        {"agent_key": agent_key, "trigger": trigger, "conv": conversation_id, "msg": message_id},
+    )
+
+
+def test_migration_0023_round_trip_and_checks():
+    from sqlalchemy.exc import IntegrityError
+
+    url = _b2_disposable_url()
+    config = _alembic_config(url)
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "0022")
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                _cob_insert(conn, agent_key="reception")
+
+        command.upgrade(config, "0023")
+        with engine.begin() as conn:
+            conv, msg, other_msg = _b3_seed_message(conn)
+            _b3_insert(conn, conversation_id=conv, message_id=msg)
+            _cob_insert(conn)  # COB rows keep both columns null
+        bad_rows = (
+            {},  # reception needs a conversation and a trigger message
+            {"conversation_id": conv},
+            {"trigger": "manual", "conversation_id": conv, "message_id": msg},
+            {"agent_key": "inventario", "conversation_id": conv, "message_id": msg},
+            {"conversation_id": conv, "message_id": other_msg},  # message of another conversation
+            {"conversation_id": conv, "message_id": 999_999},
+        )
+        for bad in bad_rows:
+            with pytest.raises(IntegrityError):
+                with engine.begin() as conn:
+                    _b3_insert(conn, **bad)
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM agent_runs"))
+
+        command.downgrade(config, "0022")
+        with engine.connect() as conn:
+            columns = set(
+                conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_name = 'agent_runs'"
+                    )
+                ).scalars()
+            )
+        assert not {"conversation_id", "trigger_message_id"} & columns
+        command.upgrade(config, "0023")
     finally:
         engine.dispose()
         _b2_drop(url)

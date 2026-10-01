@@ -5,18 +5,36 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from enum import Enum
+from typing import Literal
 
-from sqlalchemy import and_, func, or_, select, text, update
+from pydantic import BaseModel
+from sqlalchemy import (
+    DateTime,
+    Integer,
+    and_,
+    exists,
+    func,
+    literal,
+    or_,
+    select,
+    text,
+    true,
+    tuple_,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.audit.service import record_event
 from app.config import get_settings
 from app.errors import AppError, ErrorCode
 from app.iam.context import ExecutionContext
+from app.iam.models import Principal
 from app.iam.permissions import (
     CONVERSATIONS_MANAGE,
     CONVERSATIONS_READ,
+    CONVERSATIONS_RESUME,
     DELIVERIES_CREATE,
     DELIVERIES_MANAGE,
     MESSAGES_CREATE,
@@ -29,6 +47,7 @@ from app.messaging.models import (
     Conversation,
     Message,
     OutboundMessage,
+    ReceptionHandoff,
     SandboxDeliveryReceipt,
 )
 from app.messaging.schemas import (
@@ -820,3 +839,508 @@ def redact_expired_message_content(
     )
     session.commit()
     return len(ids)
+
+
+# --- B3 staff reads: conversations, messages, handoffs, claim ------------------
+#
+# Spec: ``docs/superpowers/specs/2026-10-01-erp-b3.md``. Human principals only
+# (agents keep ``/internal/*`` and their tools); every read is org-scoped and
+# authorized inside ``session.begin()``; message content respects retention.
+
+PREVIEW_CHARS = 80
+OP_HANDOFF_CLAIM = "reception_handoff.claim"
+HANDOFF_ENTITY_TYPE = "reception_handoff"
+MEDIA_TYPES = ("audio", "image")
+
+
+class HandoffErrorCode(str, Enum):
+    HANDOFF_NOT_PENDING = "HANDOFF_NOT_PENDING"
+
+
+def _handoff_not_pending(status: str) -> AppError:
+    return AppError(
+        HandoffErrorCode.HANDOFF_NOT_PENDING,
+        "The handoff is no longer pending.",
+        details={"status": status},
+        http_status=409,
+    )
+
+
+ContentState = Literal["available", "redacted", "expired"]
+
+
+class MessagePreview(BaseModel):
+    direction: str
+    text: str | None
+    occurred_at: datetime
+
+
+class ConversationSummary(BaseModel):
+    id: int
+    status: str
+    contact_identity_id: int
+    contact_display_name: str
+    assigned_principal_id: int | None
+    assigned_display_name: str | None
+    last_message_at: datetime
+    last_message_preview: MessagePreview | None
+    pending_handoff_id: int | None
+
+
+class ConversationPage(BaseModel):
+    items: list[ConversationSummary]
+    next_cursor: str | None
+
+
+class StaffMessageRead(BaseModel):
+    id: int
+    direction: str
+    message_type: str
+    text: str | None
+    has_media: bool
+    content_state: ContentState
+    delivery_status: str
+    occurred_at: datetime
+
+
+class MessagePage(BaseModel):
+    items: list[StaffMessageRead]
+    next_cursor: str | None
+
+
+class HandoffRead(BaseModel):
+    id: int
+    conversation_id: int
+    contact_display_name: str
+    reason_code: str
+    reason_summary: str
+    status: str
+    claimed_by_principal_id: int | None
+    claimed_by_display_name: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class HandoffPage(BaseModel):
+    items: list[HandoffRead]
+    next_cursor: str | None
+
+
+def mask_phone(e164: str) -> str:
+    """``+`` and every digit masked except the last 3; country code not parsed."""
+    digits = e164.lstrip("+")
+    return "+" + "\u2022" * max(len(digits) - 3, 0) + digits[-3:]
+
+
+def _display_name(patient_name: str | None, lead_name: str | None, phone: str) -> str:
+    return patient_name or lead_name or mask_phone(phone)
+
+
+def _content_state(redacted_at, expires_at, now: datetime) -> ContentState:
+    if redacted_at is not None:
+        return "redacted"
+    if expires_at <= now:
+        return "expired"
+    return "available"
+
+
+def _contact_names():
+    """``(Patient, Lead)`` columns joined tenant-consistently to the contact."""
+    from app.clinical.models import Patient
+    from app.commercial.models import Lead
+
+    return Patient, Lead
+
+
+def _staff_read(session: Session, ctx: ExecutionContext) -> None:
+    from app.observability.common import require_human
+
+    require_human(ctx)
+    require_permission(session, ctx, CONVERSATIONS_READ)
+
+
+def _ts(value: datetime):
+    return literal(value, DateTime(timezone=True))
+
+
+def list_staff_conversations(
+    session: Session,
+    *,
+    ctx: ExecutionContext,
+    status: str | None = None,
+    location_id: int | None = None,
+    limit: int = 25,
+    cursor: str | None = None,
+) -> ConversationPage:
+    """Newest activity first, keyset on ``(last_message_at, id) DESC``.
+
+    ``last_message_at`` is mutable: a bumped conversation moves above the
+    cursor (never duplicated; seen on refresh). See spec *Cursor guarantee*.
+    """
+    from app.observability.common import decode_cursor, encode_cursor
+    from app.scheduling.models import Appointment
+
+    after = decode_cursor(cursor, (datetime, int)) if cursor else None
+    Patient, Lead = _contact_names()
+    assignee = aliased(Principal)
+    org = ctx.organization_id
+    latest = (
+        select(
+            Message.direction,
+            Message.body_text,
+            Message.occurred_at,
+            Message.content_redacted_at,
+            Message.content_expires_at,
+        )
+        .where(Message.organization_id == org, Message.conversation_id == Conversation.id)
+        .order_by(Message.occurred_at.desc(), Message.id.desc())
+        .limit(1)
+        .correlate(Conversation)
+        .lateral("latest")
+    )
+    pending = (
+        select(ReceptionHandoff.id)
+        .where(
+            ReceptionHandoff.organization_id == org,
+            ReceptionHandoff.conversation_id == Conversation.id,
+            ReceptionHandoff.status == "pending",
+        )
+        .correlate(Conversation)
+        .scalar_subquery()
+    )
+    statement = (
+        select(
+            Conversation,
+            ContactIdentity.normalized_phone_e164,
+            Patient.full_name,
+            Lead.full_name,
+            assignee.display_name,
+            latest.c.direction,
+            latest.c.body_text,
+            latest.c.occurred_at,
+            latest.c.content_redacted_at,
+            latest.c.content_expires_at,
+            pending.label("pending_handoff_id"),
+        )
+        .join(
+            ContactIdentity,
+            and_(
+                ContactIdentity.organization_id == Conversation.organization_id,
+                ContactIdentity.id == Conversation.contact_identity_id,
+            ),
+        )
+        .outerjoin(
+            Patient,
+            and_(
+                Patient.organization_id == ContactIdentity.organization_id,
+                Patient.id == ContactIdentity.patient_id,
+            ),
+        )
+        .outerjoin(
+            Lead,
+            and_(
+                Lead.organization_id == ContactIdentity.organization_id,
+                Lead.id == ContactIdentity.lead_id,
+            ),
+        )
+        .outerjoin(assignee, assignee.id == Conversation.assigned_principal_id)
+        .outerjoin(latest, true())
+        .where(Conversation.organization_id == org)
+    )
+    if status is not None:
+        statement = statement.where(Conversation.status == status)
+    if location_id is not None:
+        statement = statement.where(
+            exists().where(
+                Appointment.organization_id == org,
+                Appointment.location_id == location_id,
+                or_(
+                    and_(
+                        ContactIdentity.lead_id.is_not(None),
+                        Appointment.lead_id == ContactIdentity.lead_id,
+                    ),
+                    and_(
+                        ContactIdentity.patient_id.is_not(None),
+                        Appointment.patient_id == ContactIdentity.patient_id,
+                    ),
+                ),
+            )
+        )
+    if after is not None:
+        statement = statement.where(
+            tuple_(Conversation.last_message_at, Conversation.id)
+            < tuple_(_ts(after[0]), literal(after[1], Integer))
+        )
+    statement = statement.order_by(
+        Conversation.last_message_at.desc(), Conversation.id.desc()
+    ).limit(limit + 1)
+    with session.begin():
+        _staff_read(session, ctx)
+        rows = session.execute(statement).all()
+        now = _now()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = []
+        for (
+            conversation, phone, patient_name, lead_name, assignee_name,
+            direction, body, occurred_at, redacted_at, expires_at, pending_id,
+        ) in rows:
+            preview = None
+            if occurred_at is not None:
+                visible = _content_state(redacted_at, expires_at, now) == "available"
+                preview = MessagePreview(
+                    direction=direction,
+                    text=body[:PREVIEW_CHARS] if visible and body is not None else None,
+                    occurred_at=occurred_at,
+                )
+            items.append(
+                ConversationSummary(
+                    id=conversation.id,
+                    status=conversation.status,
+                    contact_identity_id=conversation.contact_identity_id,
+                    contact_display_name=_display_name(patient_name, lead_name, phone),
+                    assigned_principal_id=conversation.assigned_principal_id,
+                    assigned_display_name=assignee_name,
+                    last_message_at=conversation.last_message_at,
+                    last_message_preview=preview,
+                    pending_handoff_id=pending_id,
+                )
+            )
+    last = rows[-1][0] if rows else None
+    return ConversationPage(
+        items=items,
+        next_cursor=encode_cursor(last.last_message_at, last.id) if has_more else None,
+    )
+
+
+def list_conversation_messages(
+    session: Session,
+    *,
+    ctx: ExecutionContext,
+    conversation_id: int,
+    limit: int = 25,
+    cursor: str | None = None,
+) -> MessagePage:
+    """Oldest → newest, keyset on ``(occurred_at, id) ASC``; 404 outside the org."""
+    from app.observability.common import decode_cursor, encode_cursor
+
+    after = decode_cursor(cursor, (datetime, int)) if cursor else None
+    org = ctx.organization_id
+    statement = select(Message).where(
+        Message.organization_id == org, Message.conversation_id == conversation_id
+    )
+    if after is not None:
+        statement = statement.where(
+            tuple_(Message.occurred_at, Message.id)
+            > tuple_(_ts(after[0]), literal(after[1], Integer))
+        )
+    statement = statement.order_by(Message.occurred_at.asc(), Message.id.asc()).limit(limit + 1)
+    with session.begin():
+        _staff_read(session, ctx)
+        found = session.scalar(
+            select(Conversation.id).where(
+                Conversation.organization_id == org, Conversation.id == conversation_id
+            )
+        )
+        if found is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Conversation not found.")
+        rows = session.scalars(statement).all()
+        now = _now()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = []
+        for message in rows:
+            state = _content_state(message.content_redacted_at, message.content_expires_at, now)
+            items.append(
+                StaffMessageRead(
+                    id=message.id,
+                    direction=message.direction,
+                    message_type=message.message_type,
+                    text=message.body_text if state == "available" else None,
+                    has_media=message.message_type in MEDIA_TYPES,
+                    content_state=state,
+                    delivery_status=message.delivery_status,
+                    occurred_at=message.occurred_at,
+                )
+            )
+    last = rows[-1] if rows else None
+    return MessagePage(
+        items=items,
+        next_cursor=encode_cursor(last.occurred_at, last.id) if has_more else None,
+    )
+
+
+def _handoff_statement(org: int):
+    Patient, Lead = _contact_names()
+    claimant = aliased(Principal)
+    return (
+        select(
+            ReceptionHandoff,
+            Conversation.assigned_principal_id,
+            claimant.display_name,
+            ContactIdentity.normalized_phone_e164,
+            Patient.full_name,
+            Lead.full_name,
+        )
+        .join(
+            Conversation,
+            and_(
+                Conversation.organization_id == ReceptionHandoff.organization_id,
+                Conversation.id == ReceptionHandoff.conversation_id,
+            ),
+        )
+        .join(
+            ContactIdentity,
+            and_(
+                ContactIdentity.organization_id == ReceptionHandoff.organization_id,
+                ContactIdentity.id == ReceptionHandoff.contact_identity_id,
+            ),
+        )
+        .outerjoin(
+            Patient,
+            and_(
+                Patient.organization_id == ContactIdentity.organization_id,
+                Patient.id == ContactIdentity.patient_id,
+            ),
+        )
+        .outerjoin(
+            Lead,
+            and_(
+                Lead.organization_id == ContactIdentity.organization_id,
+                Lead.id == ContactIdentity.lead_id,
+            ),
+        )
+        .outerjoin(claimant, claimant.id == Conversation.assigned_principal_id)
+        .where(ReceptionHandoff.organization_id == org)
+    )
+
+
+def _handoff_read(row) -> HandoffRead:
+    handoff, assignee_id, assignee_name, phone, patient_name, lead_name = row
+    # No claimant column: derived from the conversation assignee only while
+    # the handoff is ``claimed`` (resume never clears the assignee).
+    claimed = handoff.status == "claimed"
+    return HandoffRead(
+        id=handoff.id,
+        conversation_id=handoff.conversation_id,
+        contact_display_name=_display_name(patient_name, lead_name, phone),
+        reason_code=handoff.reason_code,
+        reason_summary=handoff.reason_summary,
+        status=handoff.status,
+        claimed_by_principal_id=assignee_id if claimed else None,
+        claimed_by_display_name=assignee_name if claimed else None,
+        created_at=handoff.created_at,
+        updated_at=handoff.updated_at,
+    )
+
+
+def list_handoffs(
+    session: Session,
+    *,
+    ctx: ExecutionContext,
+    status: str = "pending",
+    limit: int = 25,
+    cursor: str | None = None,
+) -> HandoffPage:
+    """The handoff queue, oldest first: keyset on ``(created_at, id) ASC``."""
+    from app.observability.common import decode_cursor, encode_cursor
+
+    after = decode_cursor(cursor, (datetime, int)) if cursor else None
+    statement = _handoff_statement(ctx.organization_id).where(ReceptionHandoff.status == status)
+    if after is not None:
+        statement = statement.where(
+            tuple_(ReceptionHandoff.created_at, ReceptionHandoff.id)
+            > tuple_(_ts(after[0]), literal(after[1], Integer))
+        )
+    statement = statement.order_by(
+        ReceptionHandoff.created_at.asc(), ReceptionHandoff.id.asc()
+    ).limit(limit + 1)
+    with session.begin():
+        _staff_read(session, ctx)
+        rows = session.execute(statement).all()
+        has_more = len(rows) > limit
+        items = [_handoff_read(row) for row in rows[:limit]]
+    last = items[-1] if items else None
+    return HandoffPage(
+        items=items,
+        next_cursor=encode_cursor(last.created_at, last.id) if has_more else None,
+    )
+
+
+def get_handoff(session: Session, *, ctx: ExecutionContext, handoff_id: int) -> HandoffRead:
+    session.expire_all()
+    with session.begin():
+        _staff_read(session, ctx)
+        row = session.execute(
+            _handoff_statement(ctx.organization_id).where(ReceptionHandoff.id == handoff_id)
+        ).first()
+        if row is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Handoff not found.")
+        return _handoff_read(row)
+
+
+def claim_handoff(
+    session: Session,
+    *,
+    ctx: ExecutionContext,
+    handoff_id: int,
+    idempotency: IdempotencyClaim | None = None,
+) -> int:
+    """A human takes over a pending handoff: one tx, receipt first, row locks."""
+    from app.observability.common import require_human
+
+    now = _now()
+    with session.begin():
+        receipt = claim_receipt(session, ctx, idempotency)
+        require_human(ctx)
+        require_permission(session, ctx, CONVERSATIONS_RESUME)
+        handoff = session.scalar(
+            select(ReceptionHandoff)
+            .where(
+                ReceptionHandoff.organization_id == ctx.organization_id,
+                ReceptionHandoff.id == handoff_id,
+            )
+            .with_for_update()
+        )
+        if handoff is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Handoff not found.")
+        conversation = session.scalar(
+            select(Conversation)
+            .where(
+                Conversation.organization_id == ctx.organization_id,
+                Conversation.id == handoff.conversation_id,
+            )
+            .with_for_update()
+        )
+        mine = (
+            handoff.status == "claimed"
+            and conversation.assigned_principal_id == ctx.principal_id
+        )
+        if not mine:
+            if handoff.status != "pending":
+                raise _handoff_not_pending(handoff.status)
+            handoff.status = "claimed"
+            handoff.updated_at = now
+            conversation.assigned_principal_id = ctx.principal_id
+            conversation.updated_at = now
+            session.flush()
+            record_event(
+                session,
+                ctx=ctx,
+                entity_type=HANDOFF_ENTITY_TYPE,
+                entity_id=str(handoff.id),
+                action="reception_handoff.claimed",
+                before_state={"status": "pending"},
+                after_state={
+                    "status": "claimed",
+                    "conversation_id": conversation.id,
+                    "assigned_principal_id": ctx.principal_id,
+                },
+            )
+        settle_receipt(
+            receipt,
+            resource_type=HANDOFF_ENTITY_TYPE,
+            resource_id=str(handoff.id),
+            outcome_json={"handoff_id": handoff.id},
+        )
+        return handoff.id

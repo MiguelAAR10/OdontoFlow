@@ -51,6 +51,7 @@ from app.iam.permissions import (  # noqa: E402
     APPOINTMENTS_READ,
     APPOINTMENTS_RECORD_OUTCOME,
     APPOINTMENTS_RESCHEDULE,
+    AUDIT_READ,
     AVAILABILITY_READ,
     CHARGES_CREATE,
     CHARGES_READ,
@@ -216,6 +217,10 @@ _SECRETARIA: tuple[str, ...] = (
     PROPOSALS_READ,
     PROPOSALS_DECIDE,
     DELIVERIES_CREATE,
+    # B3: claim a handoff (``POST /handoffs/{id}/claim``) and hand the chat
+    # back to AIRY (existing ``/internal/conversations/{id}/resume``). The
+    # activity feed (``GET /activity``) is gated on ``proposals.read`` above.
+    CONVERSATIONS_RESUME,
 )
 HUMAN_PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     "secretaria": _SECRETARIA,
@@ -229,6 +234,13 @@ HUMAN_PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         MOVEMENTS_CREATE,
         REORDER_POINTS_MANAGE,
         PAYMENTS_REVERSE,
+        # B3: ``audit.read`` is the *productivity* gate (``GET
+        # /metrics/productivity``), admin-only without a new code. Mapping, so
+        # a later card does not misread it: the activity feed is gated on
+        # ``proposals.read`` (secretaria has it), productivity on
+        # ``audit.read``. Granting ``audit.read`` to secretaria would open
+        # clinic productivity/money reads, not just "the audit trail".
+        AUDIT_READ,
     ),
 }
 _HUMAN_ROLE_NAMES = {"secretaria": "Secretaria", "administrador": "Administrador"}

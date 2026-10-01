@@ -14,6 +14,8 @@ from app.iam.router import router as iam_router
 from app.inventory.router import router as inventory_router
 from app.http_security import SecurityBoundaryMiddleware, install_security_openapi
 from app.messaging.router import router as messaging_router
+from app.messaging.router import staff_router as staff_conversations_router
+from app.observability.router import router as observability_router
 from app.organization.router import router as organization_router
 from app.proposals.router import router as proposals_router
 from app.scheduling.router import router as scheduling_router
@@ -76,6 +78,8 @@ def create_app() -> FastAPI:
     # IDN: ``GET /me`` (iam_router) is on the same boundary.
     # B2: agent proposals and the approval inbox (``/agent/*``) too.
     # COB: agent runs (``/agent-runs``) too.
+    # B3: staff reads (``/conversations``, ``/handoffs``, ``/activity``,
+    # ``/metrics/productivity``) too; their services also refuse non-humans.
     authenticated = [Depends(require_authenticated_context)]
     for business_router in (
         agent_runs_router,
@@ -87,9 +91,11 @@ def create_app() -> FastAPI:
         iam_router,
         inventory_router,
         messaging_router,
+        observability_router,
         organization_router,
         proposals_router,
         scheduling_router,
+        staff_conversations_router,
         waitlist_router,
     ):
         app.include_router(business_router, dependencies=authenticated)

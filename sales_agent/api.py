@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+from datetime import UTC, datetime
 from time import perf_counter_ns
 from typing import Any
 from uuid import UUID
@@ -26,6 +27,7 @@ from app.iam.service import (
     IamErrorCode,
     require_permission,
 )
+from app.observability.runs import record_reception_turn
 from sales_agent.config import AgentSettings, get_settings
 from sales_agent.schemas import (
     AgentUnavailableError,
@@ -35,6 +37,7 @@ from sales_agent.schemas import (
 )
 
 diagnostic_logger = logging.getLogger("sales_agent.diagnostics")
+run_logger = logging.getLogger("sales_agent.runs")
 
 FAILURE_HANDOFF_REASON_CODE = "other"
 FAILURE_HANDOFF_REASON_SUMMARY = (
@@ -188,6 +191,39 @@ def _error_response(
     )
 
 
+def _persist_turn_run(
+    request: Request,
+    payload: SalesAgentTurnRequest,
+    *,
+    started_at: datetime,
+    error_category: str | None,
+) -> None:
+    """B3: one ``agent_runs`` row per turn, best effort and in its own tx.
+
+    Never changes the turn's response: any failure here (database down, a
+    message id that is not in that conversation → FK) is logged and swallowed,
+    because an error would make n8n retry a turn whose effects already happened.
+    """
+    ctx = getattr(request.state, "execution_context", None)
+    if ctx is None:
+        return
+    maker = getattr(request.app.state, "auth_sessionmaker", None) or SessionLocal
+    try:
+        with maker() as session:
+            record_reception_turn(
+                session,
+                ctx,
+                conversation_id=payload.conversation_id,
+                trigger_message_id=payload.latest_inbound_message_id,
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                status="completed" if error_category is None else "failed",
+                error_category=error_category,
+            )
+    except Exception as exc:  # noqa: BLE001 - telemetry must never fail the turn
+        run_logger.warning("sales_agent_run_not_recorded %s", type(exc).__name__)
+
+
 def _build_runtime(settings: AgentSettings):
     try:
         from sales_agent.gateway import BackendGateway
@@ -232,6 +268,18 @@ def create_app(*, runtime: Any | None = None, settings: AgentSettings | None = N
         ],
     )
     def sales_agent_turn(payload: SalesAgentTurnRequest, request: Request):
+        started_at = datetime.now(UTC)
+        outcome: dict[str, str | None] = {"category": "unexpected"}
+        try:
+            return _run_turn(payload, request, outcome)
+        finally:
+            _persist_turn_run(
+                request, payload, started_at=started_at, error_category=outcome["category"]
+            )
+
+    def _run_turn(
+        payload: SalesAgentTurnRequest, request: Request, outcome: dict[str, str | None]
+    ):
         started_ns = perf_counter_ns()
         active_runtime = getattr(request.app.state, "sales_agent_runtime", None)
         if active_runtime is None:
@@ -241,6 +289,7 @@ def create_app(*, runtime: Any | None = None, settings: AgentSettings | None = N
             try:
                 active_runtime = _build_runtime(active_settings)
             except AgentUnavailableError as exc:
+                outcome["category"] = "agent_unavailable"
                 _record_failure(request, exc, elapsed_ms=_elapsed_ms(started_ns))
                 return _error_response(
                     "AGENT_UNAVAILABLE",
@@ -250,8 +299,11 @@ def create_app(*, runtime: Any | None = None, settings: AgentSettings | None = N
                 )
             request.app.state.sales_agent_runtime = active_runtime
         try:
-            return active_runtime.turn(payload)
+            response = active_runtime.turn(payload)
+            outcome["category"] = None
+            return response
         except GatewayError as exc:
+            outcome["category"] = str(exc.code)
             _record_failure(request, exc, elapsed_ms=_elapsed_ms(started_ns))
             return _error_response(
                 exc.code,
@@ -260,6 +312,7 @@ def create_app(*, runtime: Any | None = None, settings: AgentSettings | None = N
                 details=_trace_details(request),
             )
         except AgentUnavailableError as exc:
+            outcome["category"] = "agent_unavailable"
             _record_failure(request, exc, elapsed_ms=_elapsed_ms(started_ns))
             return _error_response(
                 "AGENT_UNAVAILABLE",
@@ -268,6 +321,7 @@ def create_app(*, runtime: Any | None = None, settings: AgentSettings | None = N
                 details=_trace_details(request),
             )
         except ValueError as exc:
+            outcome["category"] = "invalid_agent_response"
             _record_failure(request, exc, elapsed_ms=_elapsed_ms(started_ns))
             return _error_response(
                 "INVALID_AGENT_RESPONSE",
@@ -277,6 +331,7 @@ def create_app(*, runtime: Any | None = None, settings: AgentSettings | None = N
             )
         except RuntimeError as exc:
             diagnostic = _record_failure(request, exc, elapsed_ms=_elapsed_ms(started_ns))
+            outcome["category"] = diagnostic.category or "unknown"
             if diagnostic.category in RECOVERABLE_FAILURE_CATEGORIES:
                 _attempt_failure_handoff(active_runtime, payload)
             return _error_response(

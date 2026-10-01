@@ -8,6 +8,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 AgentKey = Literal["cobranza"]
+#: B3: reception turns also write ``agent_runs``; only the *output* widens, so
+#: ``POST /agent-runs`` still accepts ``cobranza`` alone.
+RunAgentKey = Literal["cobranza", "reception"]
 RunStatus = Literal["running", "completed", "failed"]
 RunTrigger = Literal["manual", "schedule", "event"]
 
@@ -29,7 +32,7 @@ class AgentRunCounts(BaseModel):
 
 class AgentRunOut(BaseModel):
     id: int
-    agent_key: AgentKey
+    agent_key: RunAgentKey
     trigger: RunTrigger
     status: RunStatus
     triggered_by_principal_id: int

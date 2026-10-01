@@ -1,4 +1,7 @@
-"""``agent_runs``: one row per agent sweep (COB). Mirrors migration ``0022``."""
+"""``agent_runs``: one row per agent sweep (COB) or reception turn (B3).
+
+Mirrors migrations ``0022`` and ``0023``.
+"""
 
 from __future__ import annotations
 
@@ -42,9 +45,19 @@ class AgentRun(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: B3 (0023): the reception turn's conversation and triggering message.
+    conversation_id: Mapped[int | None] = mapped_column()
+    trigger_message_id: Mapped[int | None] = mapped_column()
 
     __table_args__ = (
-        CheckConstraint("agent_key IN ('cobranza')", name="ck_agent_runs_agent_key"),
+        CheckConstraint(
+            "agent_key IN ('cobranza', 'reception')", name="ck_agent_runs_agent_key"
+        ),
+        CheckConstraint(
+            "agent_key <> 'reception' OR (trigger = 'event' AND conversation_id IS NOT NULL "
+            "AND trigger_message_id IS NOT NULL)",
+            name="ck_agent_runs_reception_trigger",
+        ),
         CheckConstraint("trigger IN ('manual', 'schedule', 'event')", name="ck_agent_runs_trigger"),
         CheckConstraint("status IN ('running', 'completed', 'failed')", name="ck_agent_runs_status"),
         UniqueConstraint("organization_id", "id", name="uq_agent_runs_organization_id"),
@@ -53,6 +66,12 @@ class AgentRun(Base):
             ["memberships.organization_id", "memberships.principal_id"],
             ondelete="RESTRICT",
             name="fk_agent_runs_organization_triggered_by",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "conversation_id", "trigger_message_id"],
+            ["messages.organization_id", "messages.conversation_id", "messages.id"],
+            ondelete="RESTRICT",
+            name="fk_agent_runs_organization_trigger_message",
         ),
         Index(
             "ix_agent_runs_org_agent_started",

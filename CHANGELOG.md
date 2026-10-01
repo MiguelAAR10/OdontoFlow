@@ -1,5 +1,36 @@
 # OdontoFlow Changelog
 
+## B3 — Staff reads: chat, handoffs, activity feed, productivity, reception runs (2026-10-01)
+
+- Human-only staff reads (agents/integrations get 403 even when they hold the
+  code; they keep `/internal/*` and their tools): `GET /conversations` (keyset on
+  `last_message_at DESC, id DESC`, filters `status`/`location_id`, contact
+  display name patient → lead → masked phone, 80-char preview),
+  `GET /conversations/{id}/messages` (oldest → newest; `text` null when redacted
+  or expired, `media_reference` never returned), `GET /handoffs?status=`
+  (queue, oldest first; claimant derived from the conversation assignee only
+  while `claimed`) and `POST /handoffs/{id}/claim` (UUIDv4 `Idempotency-Key`,
+  `conversations.resume`, audit `reception_handoff.claimed`, 409
+  `HANDOFF_NOT_PENDING`). Hand-back reuses `/internal/conversations/{id}/resume`.
+- `app/observability/`: `GET /activity` (`proposals.read`) = one SQL `UNION ALL`
+  of audit rows, proposal audit rows (agent + appointment proposals, with
+  `agent_key`/`location_id`) and `agent_runs`; `actor_kind` + display name
+  ("Sistema" for system); `summary` from a closed Spanish template map, never
+  from state JSON. `GET /metrics/productivity?from&to&location_id`
+  (`audit.read`, ≤ 92 days, local dates): appointments completed/no-show/
+  cancelled, charged/collected/outstanding (net of reversals), proposals per
+  agent with effective (lazy) expiry and reception declines from audit,
+  collection reminders approved. Computed on the fly, no stored aggregates.
+- Migration `0023_agent_runs_reception` (head `0023`): `agent_key` adds
+  `reception`; `conversation_id` + `trigger_message_id` with a composite FK into
+  `messages(organization_id, conversation_id, id)`; reception rows must be
+  `event` with both set. `sales_agent/api.py` records one run per turn on every
+  path (completed / failed with category / 503 build failure), best effort: a
+  persistence failure never changes the turn response. No audit row per turn.
+- Profiles: secretaria `+conversations.resume`; administrador `+audit.read`
+  (productivity gate — `audit.read` means clinic productivity reads, not the
+  feed). `AgentRunOut.agent_key` now `cobranza|reception` (output only).
+
 ## MCPCLI — Agentic doors: `odontoflow` CLI + MCP server over the catalog (2026-10-01)
 
 - New HTTP-only packages (no `app`/SQLAlchemy/psycopg import; a test enforces

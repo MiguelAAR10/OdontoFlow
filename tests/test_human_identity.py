@@ -56,6 +56,8 @@ ADMIN_ONLY = {
     "movements.read",
     "movements.create",
     "reorder_points.manage",
+    # B3: the productivity gate (admin-only, no new code).
+    "audit.read",
 }
 
 

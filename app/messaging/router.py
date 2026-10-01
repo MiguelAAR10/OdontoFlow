@@ -1,7 +1,9 @@
 from datetime import datetime
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.agent_tools.reception import resume_automation
@@ -28,11 +30,21 @@ from app.messaging.schemas import (
     SandboxDeliveryRequest,
 )
 from app.messaging.service import (
+    OP_HANDOFF_CLAIM,
+    ConversationPage,
+    HandoffPage,
+    HandoffRead,
+    MessagePage,
+    claim_handoff,
     claim_outbound_messages,
     close_conversation,
     enqueue_outbound_message,
+    get_handoff,
     ingest_inbound_message,
+    list_conversation_messages,
     list_conversations,
+    list_handoffs,
+    list_staff_conversations,
     receive_sandbox_message,
     settle_outbound_result,
 )
@@ -248,3 +260,98 @@ def resume_automation_route(
         resolved_handoff_ids=[int(item) for item in value["resolved_handoff_ids"]],
         replayed=outcome.replayed,
     )
+
+
+# --- B3 staff reads (no prefix; mounted on the authenticated boundary) ---------
+#
+# Thin by contract: query model (``extra="forbid"``) → service → page. Human
+# principals only; the service owns the transaction and the authorization.
+
+staff_router = APIRouter(tags=["staff-conversations"])
+REPLAY_HEADER = "Idempotent-Replay"
+
+
+class _Page(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=25, ge=1, le=100)
+    cursor: str | None = Field(default=None, max_length=512)
+
+
+class ConversationListQuery(_Page):
+    status: ConversationStatus | None = None
+    location_id: int | None = Field(default=None, ge=1)
+
+
+class HandoffListQuery(_Page):
+    status: Literal["pending", "claimed", "resolved"] = "pending"
+
+
+@staff_router.get("/conversations", response_model=ConversationPage)
+def staff_conversations_route(
+    request: Request,
+    query: Annotated[ConversationListQuery, Query()],
+    db: Session = Depends(get_db),
+) -> ConversationPage:
+    return list_staff_conversations(
+        db,
+        ctx=resolve_http_context(request),
+        status=query.status,
+        location_id=query.location_id,
+        limit=query.limit,
+        cursor=query.cursor,
+    )
+
+
+@staff_router.get("/conversations/{conversation_id}/messages", response_model=MessagePage)
+def staff_messages_route(
+    conversation_id: int,
+    request: Request,
+    query: Annotated[_Page, Query()],
+    db: Session = Depends(get_db),
+) -> MessagePage:
+    return list_conversation_messages(
+        db,
+        ctx=resolve_http_context(request),
+        conversation_id=conversation_id,
+        limit=query.limit,
+        cursor=query.cursor,
+    )
+
+
+@staff_router.get("/handoffs", response_model=HandoffPage)
+def staff_handoffs_route(
+    request: Request,
+    query: Annotated[HandoffListQuery, Query()],
+    db: Session = Depends(get_db),
+) -> HandoffPage:
+    return list_handoffs(
+        db,
+        ctx=resolve_http_context(request),
+        status=query.status,
+        limit=query.limit,
+        cursor=query.cursor,
+    )
+
+
+@staff_router.post("/handoffs/{handoff_id}/claim", response_model=HandoffRead)
+def claim_handoff_route(
+    handoff_id: int,
+    request: Request,
+    response: Response,
+    idempotency_key: str = Depends(require_uuid4_idempotency_key),
+    db: Session = Depends(get_db),
+) -> HandoffRead:
+    ctx = resolve_http_context(request)
+    outcome = run_idempotent_command(
+        db,
+        operation=claim_handoff,
+        operation_name=OP_HANDOFF_CLAIM,
+        key=idempotency_key,
+        ctx=ctx,
+        params={"handoff_id": handoff_id},
+        handoff_id=handoff_id,
+    )
+    if outcome.replayed:
+        response.headers[REPLAY_HEADER] = "true"
+    return get_handoff(db, ctx=ctx, handoff_id=handoff_id)
