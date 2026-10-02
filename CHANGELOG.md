@@ -1,5 +1,36 @@
 # OdontoFlow Changelog
 
+## B5a — Early eval harness for AIRY Recepción (2026-10-01)
+
+- New top-level package `evals/` (`python -m evals`): one throwaway template
+  database per suite (`alembic upgrade head` + `seed_demo` + an
+  `n8n-inbound` and a `sales-agent-v0` credential), one `CREATE DATABASE …
+  TEMPLATE` clone and one agent-memory database per trial, all dropped on
+  exit. Each trial plays a Peruvian-Spanish conversation through the existing
+  sandbox path (`SandboxInboundSender` → `/internal/messages/inbound` →
+  `/sales-agent/turn` → `/agent-tools/call` → canonical outbound), in-process.
+- Judged on final PostgreSQL state only; every trial also asserts money and
+  stock byte-identical, no `agent_proposals`, no new appointments. A scenario
+  passes only if all `k` repetitions pass (`pass^k`); exit code 1 otherwise.
+- Five scenarios: `agendar_limpieza`, `consulta_precio_horario`,
+  `reprogramar_cita`, `cancelar_cita`, `pedir_humano`.
+- Modes: `fake` (deterministic offline receptionist policy, default, used by
+  `tests/test_evals.py`) and `real` (the Sales Agent's configured provider;
+  `--env-file` reads only model-provider keys; never run by the suite).
+- Baselines: `evals/baselines/fake-pass3.json` (5/5, `pass^3` = 1.00) and
+  `evals/baselines/real-pass3.json` (`openrouter:deepseek/deepseek-v4-flash-0731`,
+  1/5, `pass^3` = 0.20 — 11 of 15 turns fail: 10 `invalid_agent_response`,
+  1 `provider_timeout`).
+- `alembic/env.py` now calls `fileConfig(..., disable_existing_loggers=False)`:
+  an in-process migration no longer disables loggers that already exist
+  (`sales_agent.diagnostics` went silent for every test after
+  `tests/test_migrations.py` once `tests/test_evals.py` created it earlier).
+  Deviation from the B5a write surface, with regression test
+  `test_in_process_migration_command_leaves_existing_loggers_enabled`.
+- The harness restores the root logger's level and handlers around its own
+  migration so log capture keeps working in the calling process.
+- No change to `app/`, `sales_agent/`, `integrations/`, migration revisions or seed.
+
 ## BACKFILL — Leased agent jobs + cancellation backfill agent (2026-10-01)
 
 - Migration `0026`: table `agent_jobs` (`UNIQUE(organization_id, job_key)`,

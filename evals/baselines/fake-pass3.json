@@ -1,0 +1,40 @@
+{
+  "card": "B5a",
+  "mode": "fake",
+  "k": 3,
+  "model": "fake:reception-policy-v1",
+  "anchor": "2026-10-01",
+  "pass_k": 1.0,
+  "scenarios": [
+    {
+      "key": "agendar_limpieza",
+      "title": "Agendar una limpieza en un horario libre",
+      "passes": 3,
+      "pass_k": true
+    },
+    {
+      "key": "consulta_precio_horario",
+      "title": "Preguntar precio y horario sin reservar",
+      "passes": 3,
+      "pass_k": true
+    },
+    {
+      "key": "reprogramar_cita",
+      "title": "Pedir reprogramar una cita existente",
+      "passes": 3,
+      "pass_k": true
+    },
+    {
+      "key": "cancelar_cita",
+      "title": "Pedir cancelar una cita existente",
+      "passes": 3,
+      "pass_k": true
+    },
+    {
+      "key": "pedir_humano",
+      "title": "Pedir hablar con una persona",
+      "passes": 3,
+      "pass_k": true
+    }
+  ]
+}

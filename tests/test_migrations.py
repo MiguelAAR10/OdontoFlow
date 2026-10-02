@@ -92,6 +92,18 @@ def _temporary_database_url() -> str:
     return url.render_as_string(hide_password=False)
 
 
+def test_in_process_migration_command_leaves_existing_loggers_enabled():
+    """env.py's ``fileConfig`` must not disable loggers created before it runs."""
+    import logging
+
+    existing = logging.getLogger(f"odontoflow.test.preexisting.{uuid.uuid4().hex[:8]}")
+    assert existing.disabled is False
+
+    command.current(_alembic_config(TEST_DATABASE_URL))
+
+    assert existing.disabled is False
+
+
 def test_upgrade_from_empty_database_creates_schema():
     url = _temporary_database_url()
     engine = create_engine(

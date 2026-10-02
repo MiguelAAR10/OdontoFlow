@@ -1,0 +1,40 @@
+{
+  "card": "B5a",
+  "mode": "real",
+  "k": 3,
+  "model": "openrouter:deepseek/deepseek-v4-flash-0731",
+  "anchor": "2026-10-01",
+  "pass_k": 0.2,
+  "scenarios": [
+    {
+      "key": "agendar_limpieza",
+      "title": "Agendar una limpieza en un horario libre",
+      "passes": 0,
+      "pass_k": false
+    },
+    {
+      "key": "consulta_precio_horario",
+      "title": "Preguntar precio y horario sin reservar",
+      "passes": 0,
+      "pass_k": false
+    },
+    {
+      "key": "reprogramar_cita",
+      "title": "Pedir reprogramar una cita existente",
+      "passes": 0,
+      "pass_k": false
+    },
+    {
+      "key": "cancelar_cita",
+      "title": "Pedir cancelar una cita existente",
+      "passes": 1,
+      "pass_k": false
+    },
+    {
+      "key": "pedir_humano",
+      "title": "Pedir hablar con una persona",
+      "passes": 3,
+      "pass_k": true
+    }
+  ]
+}
