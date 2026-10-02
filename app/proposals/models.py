@@ -1,6 +1,7 @@
 """``agent_proposals``: what an agent proposes and a human approves (B2).
 
-Mirrors migrations ``0021`` and ``0025`` (INV: inventory kinds); PostgreSQL owns every invariant (closed kind and
+Mirrors migrations ``0021``, ``0025`` (INV: inventory kinds) and ``0026``
+(BACKFILL: ``waitlist_offer``); PostgreSQL owns every invariant (closed kind and
 status vocabularies, decider/result/error coherence, one open proposal per
 subject, tenant-consistent composite FKs).
 """
@@ -33,6 +34,7 @@ PROPOSAL_KINDS = (
     "collection_follow_up",
     "inventory_transfer",
     "inventory_entry",
+    "waitlist_offer",
 )
 PROPOSAL_STATUSES = (
     "pending",
@@ -86,7 +88,7 @@ class AgentProposal(Base):
     __table_args__ = (
         CheckConstraint(
             "kind IN ('collection_reminder', 'collection_follow_up', 'inventory_transfer', "
-            "'inventory_entry')",
+            "'inventory_entry', 'waitlist_offer')",
             name="ck_agent_proposals_kind",
         ),
         CheckConstraint(

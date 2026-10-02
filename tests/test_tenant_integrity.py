@@ -1059,6 +1059,8 @@ def test_every_tenant_owned_table_carries_a_not_null_organization_id(session):
         "agent_proposals",
         # COB — agent runs (migration 0022).
         "agent_runs",
+        # BACKFILL — leased agent jobs (migration 0026).
+        "agent_jobs",
     }
     nullable_by_table = dict(rows)
     assert {

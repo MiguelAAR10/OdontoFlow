@@ -67,9 +67,11 @@ EXPECTED_TABLES = {
     "agent_proposals",
     # COB — agent runs (migration 0022).
     "agent_runs",
+    # BACKFILL — leased agent jobs (migration 0026).
+    "agent_jobs",
 }
 
-HEAD_REVISION = "0025"
+HEAD_REVISION = "0026"
 
 # The eight tables that gained direct tenant ownership in PF1 (PF0 T1).
 TENANT_OWNED_TABLES = (
@@ -964,6 +966,83 @@ def test_migration_0025_round_trip_and_checks():
             with engine.begin() as conn:
                 _b2_insert(conn, kind="inventory_transfer")
         command.upgrade(config, "0025")
+    finally:
+        engine.dispose()
+        _b2_drop(url)
+
+
+# --- BACKFILL: migration 0026 (agent_jobs, waitlist_offer, backfill runs) ---
+
+
+def _job_insert(conn, *, status="queued", agent_key="backfill", token=False, key=None):
+    event_id = conn.execute(
+        text(
+            "INSERT INTO domain_events (organization_id, event_type, aggregate_type, "
+            "aggregate_id, payload) VALUES (1, 'appointment.cancelled', 'appointment', '1', "
+            "'{}'::jsonb) RETURNING id"
+        )
+    ).scalar()
+    conn.execute(
+        text(
+            "INSERT INTO agent_jobs (organization_id, agent_key, job_key, source_event_id, "
+            "run_after, status, lease_token, leased_until) VALUES (1, :agent, :key, :event, "
+            "now(), :status, CASE WHEN :token THEN gen_random_uuid() END, "
+            "CASE WHEN :token THEN now() END)"
+        ),
+        {"agent": agent_key, "key": key or f"backfill:event:{event_id}", "event": event_id,
+         "status": status, "token": token},
+    )
+
+
+def test_migration_0026_round_trip_and_checks():
+    from sqlalchemy.exc import IntegrityError
+
+    url = _b2_disposable_url()
+    config = _alembic_config(url)
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "0025")
+        assert "agent_jobs" not in _b2_state(engine)[0]
+        for insert in (
+            lambda conn: _cob_insert(conn, agent_key="backfill"),
+            lambda conn: _b2_insert(conn, kind="waitlist_offer"),
+        ):
+            with pytest.raises(IntegrityError):
+                with engine.begin() as conn:
+                    insert(conn)
+
+        command.upgrade(config, "0026")
+        assert "agent_jobs" in _b2_state(engine)[0]
+        with engine.begin() as conn:
+            _cob_insert(conn, agent_key="backfill")
+            _cob_insert(conn)  # cobranza rows unchanged
+            _b2_insert(conn, kind="waitlist_offer")
+            _b2_insert(conn, kind="inventory_entry")  # INV kinds unchanged
+            _job_insert(conn)
+            _job_insert(conn, status="leased", token=True)
+            _job_insert(conn, key="dup")
+        for bad in (
+            lambda conn: _job_insert(conn, status="running"),
+            lambda conn: _job_insert(conn, agent_key="cobranza"),
+            lambda conn: _job_insert(conn, status="leased"),  # leased without a token
+            lambda conn: _job_insert(conn, status="done", token=True),  # token without lease
+            lambda conn: _job_insert(conn, key="dup"),  # one job per (org, job_key)
+            lambda conn: _b2_insert(conn, kind="waitlist_offers"),
+        ):
+            with pytest.raises(IntegrityError):
+                with engine.begin() as conn:
+                    bad(conn)
+
+        command.downgrade(config, "0025")
+        assert "agent_jobs" not in _b2_state(engine)[0]
+        with engine.begin() as conn:
+            runs = set(conn.execute(text("SELECT agent_key FROM agent_runs")).scalars())
+            kinds = set(conn.execute(text("SELECT kind FROM agent_proposals")).scalars())
+        assert runs == {"cobranza"} and kinds == {"inventory_entry"}
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                _b2_insert(conn, kind="waitlist_offer")
+        command.upgrade(config, "0026")
     finally:
         engine.dispose()
         _b2_drop(url)

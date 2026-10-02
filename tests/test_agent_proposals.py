@@ -821,6 +821,7 @@ def test_no_kind_ever_requires_an_l4_permission():
     required = {spec.required_permission for spec in KINDS.values()}
     assert set(KINDS) == {
         "collection_reminder", "collection_follow_up", "inventory_transfer", "inventory_entry",
+        "waitlist_offer",
     }
     assert required <= set(PERMISSION_CODES)
     assert not required & {PAYMENTS_REVERSE, PAYMENTS_MANAGE}

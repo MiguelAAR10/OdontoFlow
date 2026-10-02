@@ -181,5 +181,10 @@ class OdontoflowApi:
         return self.request("POST", "/agent-runs", json_body={"agent_key": agent_key},
                             idempotency_key=str(uuid4()))
 
+    def run_due_jobs(self, *, limit: int | None = None) -> dict[str, Any]:
+        """One explicit job tick (no daemon); safe to repeat, so no Idempotency-Key."""
+        body = {"limit": limit} if limit is not None else {}
+        return self.request("POST", "/agent-runs/jobs/run-due", json_body=body)
+
     def me(self) -> dict[str, Any]:
         return self.request("GET", "/me")

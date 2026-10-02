@@ -60,6 +60,12 @@ def _parser() -> argparse.ArgumentParser:
     start = runs.add_parser("start", parents=[common], help="run an agent now")
     start.add_argument("agent_key", choices=["cobranza"])
 
+    jobs = sub.add_parser("jobs", help="agent jobs").add_subparsers(
+        dest="jobs_command", required=True)
+    run_due = jobs.add_parser("run-due", parents=[common],
+                              help="enqueue, claim and handle due agent jobs once")
+    run_due.add_argument("--limit", type=int, default=None, help="max jobs to claim (1-20)")
+
     sub.add_parser("me", parents=[common], help="who this token is")
     return parser
 
@@ -84,6 +90,11 @@ def _text(command: str, body: Any) -> str:
     if command == "runs":
         counts = " ".join(f"{k}={v}" for k, v in body["counts"].items())
         return f"run {body['id']} {body['agent_key']}: {body['status']} {counts}"
+    if command == "jobs":
+        counts = " ".join(f"{k}={body[k]}" for k in
+                          ("enqueued", "claimed", "done", "failed", "dead", "lost"))
+        disabled = ",".join(body["disabled_agents"]) or "-"
+        return f"jobs: {counts} disabled={disabled}"
     if command == "me":
         p, org = body["principal"], body["organization"]
         return (f"{p['display_name']} ({p['type']} #{p['id']}) @ {org['name']}\n"
@@ -114,6 +125,8 @@ def _dispatch(api: OdontoflowApi, args: argparse.Namespace) -> Any:
         return api.decline(args.proposal_id, note=args.note)
     if command == "runs":
         return api.start_run(args.agent_key)
+    if command == "jobs":
+        return api.run_due_jobs(limit=args.limit)
     return api.me()
 
 

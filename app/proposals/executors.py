@@ -5,7 +5,8 @@ its TTL, how to resolve its subject at create time, how to recompute the
 subject version at approval time, and how to execute the existing domain
 command under the approving human's context. C2/C3 add kinds here additively
 (INV: ``inventory_transfer`` and ``inventory_entry``, proposed only by the
-server-side inventory sweep).
+server-side inventory sweep; BACKFILL: ``waitlist_offer``, proposed only by the
+server-side backfill job handler).
 
 Invariant: no kind ever requires an L4 permission (``payments.reverse``,
 ``payments.manage``); ``tests/test_agent_proposals.py`` pins it.
@@ -13,13 +14,14 @@ Invariant: no kind ever requires an L4 permission (``payments.reverse``,
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
@@ -42,10 +44,23 @@ from app.inventory.service import (
 from app.messaging.models import ContactIdentity, Conversation
 from app.messaging.service import enqueue_outbound_message
 from app.organization.models import Location
+from app.scheduling.models import Appointment
+from app.scheduling.service import CANCELLED
+from app.scheduling.waitlist import (
+    WaitlistEntry,
+    matching_open_entries,
+    offer_waitlist_entries,
+    slot_is_free,
+)
 
 TTL = timedelta(hours=72)
 CHARGE_SUBJECT = "charge"
 PRODUCT_LOCATION_SUBJECT = "product_location"
+APPOINTMENT_SUBJECT = "appointment"
+#: BACKFILL: an offer is short-lived (proposal TTL and the window the message
+#: states); at most ``MAX_OFFER_ENTRIES`` oldest matching entries are offered.
+OFFER_TTL = timedelta(minutes=30)
+MAX_OFFER_ENTRIES = 3
 
 
 # --- args ---------------------------------------------------------------------
@@ -87,6 +102,21 @@ class InventoryEntryArgs(BaseModel):
     product_id: int = Field(gt=0)
     location_id: int = Field(gt=0)
     quantity: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+
+
+class WaitlistOfferArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    appointment_id: int = Field(gt=0)
+    entry_ids: list[int] = Field(min_length=1, max_length=MAX_OFFER_ENTRIES)
+    message_text: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("entry_ids")
+    @classmethod
+    def _positive_unique(cls, value: list[int]) -> list[int]:
+        if any(i <= 0 for i in value) or len(set(value)) != len(value):
+            raise ValueError("entry_ids must be unique positive ids")
+        return value
 
 
 # --- charge facts (server-computed; never the agent's evidence) ---------------
@@ -509,6 +539,85 @@ def _entry_summary(args, _facts) -> str:
     )
 
 
+# waitlist_offer (BACKFILL) -----------------------------------------------------------
+
+
+def _appointment(session: Session, organization_id: int, appointment_id: int):
+    return session.scalar(
+        select(Appointment).where(
+            Appointment.organization_id == organization_id, Appointment.id == appointment_id
+        )
+    )
+
+
+def _offer_current(session: Session, organization_id: int, args) -> str:
+    """``"{free|taken}|{sorted ids of entry_ids still open}"`` (``-`` if gone)."""
+    appointment = _appointment(session, organization_id, args.appointment_id)
+    if appointment is None:
+        return "-"
+    free = appointment.state == CANCELLED and slot_is_free(session, appointment)
+    still_open = session.scalars(
+        select(WaitlistEntry.id)
+        .where(
+            WaitlistEntry.organization_id == organization_id,
+            WaitlistEntry.id.in_(args.entry_ids),
+            WaitlistEntry.status == "open",
+        )
+        .order_by(WaitlistEntry.id)
+    ).all()
+    return f"{'free' if free else 'taken'}|{','.join(str(i) for i in still_open)}"
+
+
+def _offer_subject(session: Session, organization_id: int, args) -> Subject:
+    appointment = _appointment(session, organization_id, args.appointment_id)
+    if appointment is None:
+        raise AppError(ErrorCode.NOT_FOUND, "Appointment not found.")
+    if appointment.state != CANCELLED or not slot_is_free(session, appointment):
+        raise AppError(ErrorCode.INVALID_INPUT, "The slot is no longer free.")
+    matching = matching_open_entries(session, organization_id, appointment=appointment,
+                                     entry_ids=args.entry_ids)
+    if {e.id for e in matching} != set(args.entry_ids) or any(
+        reachable_conversation(session, organization_id, e.patient_id) is None for e in matching
+    ):
+        raise AppError(ErrorCode.INVALID_INPUT, "A waitlist entry no longer matches the slot.")
+    return Subject(APPOINTMENT_SUBJECT, str(appointment.id),
+                   _offer_current(session, organization_id, args), appointment.location_id, None)
+
+
+def _offer_execute(session: Session, ctx: ExecutionContext, item: Execution) -> dict:
+    args = item.args
+    offered = offer_waitlist_entries(session, ctx, entry_ids=args.entry_ids,
+                                     proposal_id=item.proposal_id,
+                                     appointment_id=args.appointment_id)
+    outbound_ids = []
+    for entry_id, conversation_id in offered:
+        # One deterministic UUIDv4-shaped key per (execution, entry): the outbox
+        # CHECKs a UUIDv4 key and a retried execute must hit the same message.
+        receipt = enqueue_outbound_message(
+            session,
+            conversation_id=conversation_id,
+            text_body=args.message_text,
+            idempotency_key=offer_message_key(item.execution_key, entry_id),
+            ctx=ctx,
+        )
+        outbound_ids.append(receipt.outbound_id)
+    return {"type": "waitlist_offer", "entry_ids": [entry_id for entry_id, _ in offered],
+            "outbound_ids": outbound_ids}
+
+
+def offer_message_key(execution_key: UUID, entry_id: int) -> str:
+    digest = hashlib.sha256(f"waitlist_offer:{execution_key}:{entry_id}".encode()).digest()
+    return str(UUID(bytes=digest[:16], version=4))
+
+
+def _offer_summary(args, _facts) -> str:
+    """Args only (no session here): service, sede and time live in the evidence."""
+    return (
+        f"Cupo libre — ofrecer a {len(args.entry_ids)} pacientes en lista de espera "
+        f"(cita #{args.appointment_id})"
+    )
+
+
 KINDS: dict[str, ProposalKind] = {
     "collection_reminder": ProposalKind(
         name="collection_reminder",
@@ -552,6 +661,19 @@ KINDS: dict[str, ProposalKind] = {
         version=_entry_current,
         execute=_entry_execute,
         summary=_entry_summary,
+        revalidate=_no_revalidation,
+    ),
+    "waitlist_offer": ProposalKind(
+        name="waitlist_offer",
+        args_model=WaitlistOfferArgs,
+        required_permission=DELIVERIES_CREATE,
+        ttl=OFFER_TTL,
+        subject=_offer_subject,
+        version=_offer_current,
+        execute=_offer_execute,
+        summary=_offer_summary,
+        # The version already pins slot + open entries; the executor re-checks
+        # everything (and ``waitlist.manage``) inside its own transaction.
         revalidate=_no_revalidation,
     ),
 }

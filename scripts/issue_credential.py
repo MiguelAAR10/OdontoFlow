@@ -133,6 +133,9 @@ PROFILE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     # INV: the inventory agent (AIRY Inventario) reads products and the ledger
     # and only *proposes* transfers/entries; ``movements.create`` stays human.
     "inventory-agent": (PROPOSALS_CREATE, PROPOSALS_READ, PRODUCTS_READ, MOVEMENTS_READ),
+    # BACKFILL: the backfill agent (AIRY Backfill) reads appointments and the
+    # waitlist and only *proposes* waitlist offers; sending stays human-approved.
+    "backfill-agent": (PROPOSALS_CREATE, PROPOSALS_READ, APPOINTMENTS_READ, WAITLIST_READ),
     "reception-operator": (CONVERSATIONS_READ, CONVERSATIONS_RESUME),
     # SELF: the frontend BFF that lets a patient book from the phone. Catalog
     # and slot reads plus ``POST /public/bookings``; no patient, charge, lead,

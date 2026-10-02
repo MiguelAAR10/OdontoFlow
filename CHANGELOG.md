@@ -1,5 +1,33 @@
 # OdontoFlow Changelog
 
+## BACKFILL — Leased agent jobs + cancellation backfill agent (2026-10-01)
+
+- Migration `0026`: table `agent_jobs` (`UNIQUE(organization_id, job_key)`,
+  composite FK to `domain_events`, CHECKs on status/agent_key/attempts and
+  "leased iff token + lease"); widens `ck_agent_proposals_kind`
+  (`waitlist_offer`) and `ck_agent_runs_agent_key` (`backfill`).
+- `app/agent_jobs/service.py`: `enqueue_from_events` (one job
+  `backfill:event:<id>` per `appointment.cancelled` of the caller's org whose
+  slot starts within 48 h, `ON CONFLICT DO NOTHING`); `claim_one` (org/agent
+  scoped dead-sweep, then `FOR UPDATE SKIP LOCKED` + new `lease_token`, lease
+  5 min); fenced `settle` (`LeaseLost` on a stale token; `failed` backs off
+  60 s × attempts, `dead` at 3 attempts); per-agent kill switch
+  `AGENT_BACKFILL_ENABLED` read before every claim.
+- `POST /agent-runs/jobs/run-due {limit 1..20}` (no daemon; CLI `odontoflow
+  jobs run-due [--limit N]` or n8n): gate as COB plus `appointments.read` +
+  `waitlist.read`; a human tick proposes as `airy-backfill` (resolved before
+  any claim: 409 `not_provisioned` leaves jobs `queued`, attempts 0).
+  Profile `backfill-agent` in `issue_credential.py`. `GET /agent-runs`
+  filter accepts `backfill`.
+- Backfill handler (`app/agents_runtime/backfill.py`): free cancelled slot →
+  one `waitlist_offer` for the 3 oldest open, matching, reachable entries
+  (`matching_open_entries` + `reachable_conversation`); deduped per
+  appointment; evidence carries service, sede, `matched`, `offered_to`.
+- Kind `waitlist_offer` (TTL 30 min, `deliveries.create`, never L4): approval
+  by a secretaria runs `offer_waitlist_entries` (`waitlist.manage`, slot and
+  entries re-checked, `open → offered`, audit + `waitlist.offered` events) and
+  queues one sandbox message per entry with a deterministic key (replay-safe).
+
 ## INV — Inventory agent: multi-sede transfer proposals with evidence (2026-10-01)
 
 - `POST /agent-runs {agent_key:"inventario"}`: machine callers need

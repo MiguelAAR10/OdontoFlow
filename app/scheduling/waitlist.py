@@ -2,14 +2,16 @@
 
 A waitlist entry records that a lead wants a service within a date window,
 optionally at one location / with one practitioner / in a time-of-day window.
-B0.5 only creates, lists and cancels entries; ``offered``/``booked``/``expired``
-exist in the CHECK for B4, which will drive those transitions.
+B0.5 creates, lists and cancels entries. BACKFILL adds the matching query for
+a freed slot and the ``open → offered`` transition (an approved
+``waitlist_offer``); ``booked``/``expired`` stay for the SIM card.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -23,7 +25,9 @@ from sqlalchemy import (
     Index,
     String,
     UniqueConstraint,
+    exists,
     func,
+    or_,
     select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -47,7 +51,8 @@ from app.idempotency.service import (
     settle_receipt,
 )
 from app.organization.models import Location
-from app.scheduling.service import _load_active_member, _load_active_scoped
+from app.scheduling.models import Appointment
+from app.scheduling.service import CANCELLED, _load_active_member, _load_active_scoped
 from app.tenancy import scoped
 
 WAITLIST_STATUSES = ("open", "offered", "booked", "cancelled", "expired")
@@ -58,6 +63,14 @@ WAITLIST_CREATED_ACTION = "waitlist_entry.created"
 WAITLIST_CANCELLED_ACTION = "waitlist_entry.cancelled"
 OP_WAITLIST_CREATE = "waitlist.create"
 OP_WAITLIST_CANCEL = "waitlist.cancel"
+WAITLIST_OFFERED_ACTION = "waitlist_entry.offered"
+#: Domain event literal inlined here (``app/events/types.py`` is outside the
+#: BACKFILL write surface).
+WAITLIST_OFFERED = "waitlist.offered"
+#: BACKFILL matching policy: at most this many candidates are read per slot;
+#: a slot starting before ``MORNING_END`` (location wall clock) is "morning".
+MAX_MATCH_CANDIDATES = 50
+MORNING_END = time(12, 0)
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 REPLAY_HEADER = "Idempotent-Replay"
 
@@ -342,6 +355,160 @@ def cancel_waitlist_entry(
         )
 
     return entry
+
+
+# --- BACKFILL: matching a freed slot and offering it ------------------------------
+
+
+def slot_is_free(session: Session, appointment: Appointment) -> bool:
+    """No ``confirmed`` appointment of the practitioner overlaps ``[start, end)``.
+
+    Practitioner-global on purpose, exactly like the GiST exclusion (a shared
+    practitioner booked by another organization also takes the slot).
+    """
+    return not session.scalar(
+        select(
+            exists().where(
+                Appointment.practitioner_id == appointment.practitioner_id,
+                Appointment.state == "confirmed",
+                Appointment.start_utc < appointment.end_utc,
+                Appointment.end_utc > appointment.start_utc,
+            )
+        )
+    )
+
+
+def slot_local_start(session: Session, appointment: Appointment) -> datetime:
+    tz = session.scalar(
+        select(Location.timezone).where(
+            Location.organization_id == appointment.organization_id,
+            Location.id == appointment.location_id,
+        )
+    )
+    return appointment.start_utc.astimezone(ZoneInfo(tz or "America/Lima"))
+
+
+def matching_open_entries(
+    session: Session,
+    organization_id: int,
+    *,
+    appointment: Appointment,
+    entry_ids=None,
+    limit: int = MAX_MATCH_CANDIDATES,
+) -> list[WaitlistEntry]:
+    """The one matching query: open entries of the org that fit the freed slot.
+
+    Same service; location/practitioner NULL (any) or equal; the slot's local
+    date inside ``[earliest_date, latest_date]``; window ``any`` or the slot's
+    (morning = local start before ``MORNING_END``); never the appointment's own
+    lead; only entries with a patient (reachability is per patient). Ordered by
+    ``created_at, id``. ``entry_ids`` restricts the re-check to those rows.
+    """
+    local = slot_local_start(session, appointment)
+    window = "morning" if local.time() < MORNING_END else "afternoon"
+    statement = select(WaitlistEntry).where(
+        WaitlistEntry.organization_id == organization_id,
+        WaitlistEntry.status == "open",
+        WaitlistEntry.service_id == appointment.service_id,
+        or_(WaitlistEntry.location_id.is_(None),
+            WaitlistEntry.location_id == appointment.location_id),
+        or_(WaitlistEntry.practitioner_id.is_(None),
+            WaitlistEntry.practitioner_id == appointment.practitioner_id),
+        WaitlistEntry.earliest_date <= local.date(),
+        WaitlistEntry.latest_date >= local.date(),
+        WaitlistEntry.preferred_window.in_(("any", window)),
+        WaitlistEntry.lead_id != appointment.lead_id,
+        WaitlistEntry.patient_id.is_not(None),
+    )
+    if entry_ids is not None:
+        statement = statement.where(WaitlistEntry.id.in_(list(entry_ids)))
+    return list(
+        session.scalars(
+            statement.order_by(WaitlistEntry.created_at, WaitlistEntry.id).limit(limit)
+        )
+    )
+
+
+def offer_waitlist_entries(
+    session: Session,
+    ctx: ExecutionContext,
+    *,
+    entry_ids,
+    proposal_id: int,
+    appointment_id: int,
+) -> list[tuple[int, int]]:
+    """``open → offered`` for an approved ``waitlist_offer``; one transaction.
+
+    Re-checks everything at execute time: ``waitlist.manage``, the appointment
+    still cancelled with its slot free, and each entry (locked, org-scoped)
+    still matching and reachable. Returns ``[(entry_id, conversation_id)]``
+    ordered by entry id; nothing offered raises ``INVALID_INPUT``.
+    """
+    from app.proposals.executors import OFFER_TTL, reachable_conversation
+
+    org = ctx.organization_id
+    with session.begin():
+        require_permission(session, ctx, WAITLIST_MANAGE)
+        appointment = session.scalar(
+            select(Appointment).where(
+                Appointment.organization_id == org, Appointment.id == appointment_id
+            )
+        )
+        if appointment is None:
+            raise AppError(ErrorCode.NOT_FOUND, "Appointment not found.")
+        if appointment.state != CANCELLED or not slot_is_free(session, appointment):
+            raise AppError(ErrorCode.INVALID_INPUT, "The slot is no longer free.")
+        ids = [int(i) for i in entry_ids]
+        locked = session.scalars(
+            select(WaitlistEntry)
+            .where(WaitlistEntry.organization_id == org, WaitlistEntry.id.in_(ids))
+            .order_by(WaitlistEntry.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+        still = {
+            entry.id
+            for entry in matching_open_entries(session, org, appointment=appointment,
+                                               entry_ids=ids)
+        }
+        expires_at = datetime.now(timezone.utc) + OFFER_TTL
+        offered: list[tuple[int, int]] = []
+        for entry in locked:
+            if entry.id not in still:
+                continue
+            conversation_id = reachable_conversation(session, org, entry.patient_id)
+            if conversation_id is None:
+                continue
+            before_state = _entry_state(entry)
+            entry.status = "offered"
+            session.flush()
+            record_event(
+                session,
+                ctx=ctx,
+                entity_type=WAITLIST_ENTITY_TYPE,
+                entity_id=str(entry.id),
+                action=WAITLIST_OFFERED_ACTION,
+                before_state=before_state,
+                after_state=_entry_state(entry),
+            )
+            record_domain_event(
+                session,
+                ctx=ctx,
+                event_type=WAITLIST_OFFERED,
+                aggregate_type=WAITLIST_ENTITY_TYPE,
+                aggregate_id=str(entry.id),
+                payload={
+                    "entry_id": entry.id,
+                    "proposal_id": proposal_id,
+                    "appointment_id": appointment.id,
+                    "start_utc": appointment.start_utc.astimezone(timezone.utc).isoformat(),
+                    "offer_expires_at": expires_at.isoformat(),
+                },
+            )
+            offered.append((entry.id, conversation_id))
+        if not offered:
+            raise AppError(ErrorCode.INVALID_INPUT, "No waitlist entry can still be offered.")
+    return offered
 
 
 # --- HTTP ---------------------------------------------------------------------

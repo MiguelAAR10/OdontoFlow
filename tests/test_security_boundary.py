@@ -430,9 +430,21 @@ def test_integration_kill_switch_fails_closed(monkeypatch, migrated_engine):
 def test_rate_limit_is_shared_and_scoped_per_credential(
     monkeypatch, migrated_engine, session
 ):
+    import app.context as context_module
+    from app.iam.credentials import claim_rate_limit
+
     monkeypatch.setenv("RATE_LIMIT_MUTATIONS_PER_MINUTE", "2")
     token_a = _token_with_all_permissions(session, name="rate-a")
     token_b = _token_with_all_permissions(session, name="rate-b")
+    # The limiter is a fixed wall-clock-minute window: requests straddling a
+    # minute boundary land in two windows. Pin every claim to one mid-minute
+    # instant so the test is deterministic; the counters stay in PostgreSQL.
+    instant = datetime.now(timezone.utc).replace(second=30, microsecond=0)
+    monkeypatch.setattr(
+        context_module,
+        "claim_rate_limit",
+        lambda db, **kwargs: claim_rate_limit(db, now=instant, **kwargs),
+    )
 
     with TestClient(_app_for(migrated_engine), raise_server_exceptions=False) as client:
         assert _outbound_claim(client, token=token_a).status_code == 200

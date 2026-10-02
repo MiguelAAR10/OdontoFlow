@@ -299,8 +299,10 @@
                 {
                   "enum": [
                     "cobranza",
+                    "reception",
                     "confirmaciones",
-                    "inventario"
+                    "inventario",
+                    "backfill"
                   ],
                   "type": "string"
                 },
@@ -508,6 +510,243 @@
             }
           }
         }
+      }
+    },
+    "/agent-runs/jobs/run-due": {
+      "post": {
+        "tags": [
+          "agent-runs"
+        ],
+        "summary": "Run Due Jobs Route",
+        "description": "BACKFILL tick: enqueue due jobs from domain events, claim, handle, settle.\n\nSafe to repeat without an ``Idempotency-Key`` (unique ``job_key`` + leases).",
+        "operationId": "run_due_jobs_route_agent_runs_jobs_run_due_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobsRunDue"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobsRunOut"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid integration credential is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated principal lacks the required permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The credential rate limit was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds until the current rate-limit window resets.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 60
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The integration surface is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request body exceeds the configured limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Correlation-Id": {
+                "description": "Canonical UUID used for end-to-end traceability.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "IntegrationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Request-Id",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Correlation-Id",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
       }
     },
     "/agent-tools/call": {
@@ -14137,6 +14376,7 @@
                     "collection_follow_up",
                     "inventory_transfer",
                     "inventory_entry",
+                    "waitlist_offer",
                     "appointment_booking"
                   ],
                   "type": "string"
@@ -20591,7 +20831,8 @@
               "cobranza",
               "reception",
               "confirmaciones",
-              "inventario"
+              "inventario",
+              "backfill"
             ],
             "title": "Agent Key"
           },
@@ -22284,6 +22525,7 @@
               "collection_follow_up",
               "inventory_transfer",
               "inventory_entry",
+              "waitlist_offer",
               "appointment_booking"
             ],
             "title": "Kind"
@@ -22519,6 +22761,140 @@
           "next_cursor"
         ],
         "title": "InboxPage"
+      },
+      "JobOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "job_key": {
+            "type": "string",
+            "title": "Job Key"
+          },
+          "agent_key": {
+            "type": "string",
+            "const": "backfill",
+            "title": "Agent Key"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "done",
+              "failed",
+              "dead",
+              "lost"
+            ],
+            "title": "Status"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "job_key",
+          "agent_key",
+          "status",
+          "attempts",
+          "run_id",
+          "last_error"
+        ],
+        "title": "JobOut"
+      },
+      "JobsRunDue": {
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "default": 10
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "JobsRunDue",
+        "description": "Only how many jobs this tick may claim; everything else is server state."
+      },
+      "JobsRunOut": {
+        "properties": {
+          "enqueued": {
+            "type": "integer",
+            "title": "Enqueued"
+          },
+          "claimed": {
+            "type": "integer",
+            "title": "Claimed"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "dead": {
+            "type": "integer",
+            "title": "Dead"
+          },
+          "lost": {
+            "type": "integer",
+            "title": "Lost"
+          },
+          "disabled_agents": {
+            "items": {
+              "type": "string",
+              "const": "backfill"
+            },
+            "type": "array",
+            "title": "Disabled Agents"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobOut"
+            },
+            "type": "array",
+            "title": "Jobs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enqueued",
+          "claimed",
+          "done",
+          "failed",
+          "dead",
+          "lost",
+          "disabled_agents",
+          "jobs"
+        ],
+        "title": "JobsRunOut"
       },
       "LeadCreate": {
         "properties": {
